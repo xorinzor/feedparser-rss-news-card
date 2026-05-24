@@ -1,4 +1,3 @@
-
 const RSS_LOCALES = {
   en: {
     no_articles: 'No articles to display.',
@@ -44,7 +43,7 @@ const RSS_LOCALES = {
     },
     cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
     ed: {
-      card_title:          'Kártya címe',
+      card_title:          'Kártya cime',
       card_title_color:    'Kártya cím színe',
       article_title_color: 'Cikkek cím színe',
       desc_color:          'Leírás színe',
@@ -95,7 +94,6 @@ const RSS_LOCALES = {
   },
 };
 
-// HA language code → locale string mapping
 const HA_LANG_TO_DATE_LOCALE = {
   hu: 'hu-HU', en: 'en-US', de: 'de-DE', fr: 'fr-FR',
   es: 'es-ES', it: 'it-IT', pl: 'pl-PL', nl: 'nl-NL',
@@ -133,7 +131,7 @@ class RssNewsCard extends HTMLElement {
   static getStubConfig() {
     return {
       title: 'News',
-      sources: [{ entity: 'sensor.news_feed', name: 'News Source', color: '#e63946' }],
+      sources: [{ entity: 'sensor.feedparser_news', name: 'Feedparser Source', color: '#e63946' }],
       max_articles: 10,
       card_height: 400,
       show_description: true,
@@ -171,7 +169,6 @@ class RssNewsCard extends HTMLElement {
     };
     this._initialized = false;
     this._render();
-    // Apply dynamic properties immediately after render
     if (this._hass) {
       this._updateContent(this._articles || [], JSON.parse(this._lastIssuesJson || '[]'));
     }
@@ -179,7 +176,6 @@ class RssNewsCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    // Build a lightweight stateKey from all source sensors – skip render if nothing changed
     const stateKey = this._config.sources.map(s => {
       const st = hass.states[s.entity];
       return st ? (s.entity + ':' + st.state + ':' + st.last_updated) : s.entity;
@@ -195,7 +191,6 @@ class RssNewsCard extends HTMLElement {
 
   _getLang() {
     const haLang = detectHaLanguage(this._hass);
-    // Use first part of language code (e.g. 'en' from 'en-US')
     return haLang.split('-')[0].toLowerCase();
   }
 
@@ -248,7 +243,6 @@ class RssNewsCard extends HTMLElement {
     if (!this._hass) return [];
     let all = [];
     
-    // Gather all articles from all sources
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
       if (!state) continue;
@@ -263,16 +257,15 @@ class RssNewsCard extends HTMLElement {
       }));
     }
 
-    // Robust sorting: parse dates safely to prevent NaN from breaking the sort order
+    // Strict sorting strictly optimized for feedparser's 'published' attribute
     all.sort((a, b) => {
-      let timeA = new Date(a.published || a.pubDate || 0).getTime();
-      let timeB = new Date(b.published || b.pubDate || 0).getTime();
+      let timeA = new Date(a.published || 0).getTime();
+      let timeB = new Date(b.published || 0).getTime();
       
-      // Fallback to 0 if the date string was invalid or unparseable
       if (isNaN(timeA)) timeA = 0;
       if (isNaN(timeB)) timeB = 0;
       
-      return timeB - timeA; // Descending order (newest first)
+      return timeB - timeA;
     });
 
     return all.slice(0, this._config.max_articles);
@@ -306,10 +299,12 @@ class RssNewsCard extends HTMLElement {
     const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color } = this._config;
     const t = this._t();
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
+    
     return articles.map(a => {
-      // Allow fallback to summary if description is not available in the payload
-      const desc = a.description || a.summary;
-      const pubDate = a.published || a.pubDate;
+      // Stripped of unneeded non-feedparser properties (summary, pubDate)
+      const desc = a.description;
+      const pubDate = a.published;
+      
       return `
       <div class="rss-article-row" data-rss-url="${a.link}"
         style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--divider-color);cursor:pointer;-webkit-tap-highlight-color:transparent;">
@@ -320,7 +315,7 @@ class RssNewsCard extends HTMLElement {
             <div style="font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               ${show_source ? `<span style="font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:${a._sourceColor};">${a._sourceName}</span>` : ''}
               ${(show_source && show_date) ? `<span style="opacity:0.4;">·</span>` : ''}
-              ${show_date ? `<span>${this._formatDate(pubDate)}</span>` : ''}
+              ${show_date && pubDate ? `<span>${this._formatDate(pubDate)}</span>` : ''}
             </div>` : ''}
           ${show_description && desc ? `<div style="font-size:${desc_font_size}px;color:${desc_color || 'var(--secondary-text-color)'};line-height:1.4;white-space:normal;word-break:break-word;">${desc}</div>` : ''}
         </div>
@@ -345,7 +340,6 @@ class RssNewsCard extends HTMLElement {
   }
 
   _render() {
-    const { title, card_height } = this._config;
     this.innerHTML = `
       <ha-card>
         <style>
@@ -366,7 +360,6 @@ class RssNewsCard extends HTMLElement {
     if (!this._initialized) this._render();
     const { title, card_height, card_title_color } = this._config;
 
-    // Update title
     const titleEl = this.querySelector('.rss-title-el');
     if (titleEl) {
       titleEl.className = title ? 'rss-title-el rss-title' : 'rss-title-el';
@@ -374,7 +367,6 @@ class RssNewsCard extends HTMLElement {
       titleEl.textContent = title || '';
     }
 
-    // Update scroll height dynamically
     const scrollEl = this.querySelector('.rss-scroll');
     if (scrollEl) scrollEl.style.height = (card_height || 400) + 'px';
 
@@ -575,7 +567,7 @@ class RssNewsCardEditor extends HTMLElement {
     const sources = this._config.sources || [];
     container.innerHTML = sources.map((s, i) => `
       <div class="rss-src-row" data-idx="${i}">
-        <input type="text" style="flex:1;min-width:0;" placeholder="sensor.news_feed" data-field="entity" value="${s.entity || ''}"/>
+        <input type="text" style="flex:1;min-width:0;" placeholder="sensor.feedparser_news" data-field="entity" value="${s.entity || ''}"/>
         <input type="text" style="width:80px;flex-shrink:0;" placeholder="Name" data-field="name" value="${s.name || ''}"/>
         <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
           <div style="position:absolute;inset:0;background:${s.color || '#0077cc'};pointer-events:none;" class="rss-color-preview-${i}"></div>
