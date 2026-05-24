@@ -1,23 +1,17 @@
-/**
- * RSS News Card for Home Assistant
- * v1.5.2 - HACS-compatible, auto language detection, visual editor,
- *           configurable colors/fonts, visited article tracking
- */
 
-// ─── Localizations ────────────────────────────────────────────────────────────
 const RSS_LOCALES = {
   en: {
     no_articles: 'No articles to display.',
     diag_title: '⚠️ Sensor diagnostics',
-    diag_footer: 'Missing sensors must be created as <code>command_line</code> sensors in <b>configuration.yaml</b>.',
+    diag_footer: 'Missing sensors must be created using the <b>feedparser</b> custom component.',
     problems: {
       missing_entity:        { icon: '⚠️', text: 'Missing entity ID in configuration.' },
       not_found:             { icon: '❌', text: 'Entity does not exist in Home Assistant.' },
       unavailable:           { icon: '🔌', text: 'Entity is unavailable or in unknown state.' },
-      no_articles_attribute: { icon: '🗂️', text: 'Entity has no "articles" attribute.' },
+      no_entries_attribute:  { icon: '🗂️', text: 'Entity has no "entries" attribute (check feedparser configuration).' },
       empty:                 { icon: '📭', text: 'Entity is reachable but contains no articles yet.' },
     },
-    cmd_hint: 'A command_line sensor is required:<br><b>entity_id:</b> {entity}<br><b>json_attributes:</b> articles',
+    cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
     ed: {
       card_title:        'Card title',
       card_title_color:  'Card title color',
@@ -40,15 +34,15 @@ const RSS_LOCALES = {
   hu: {
     no_articles: 'Nincs megjeleníthető cikk.',
     diag_title: '⚠️ Szenzor diagnosztika',
-    diag_footer: 'A hibás szenzorokat <code>command_line</code> szenzorokként kell létrehozni a <b>configuration.yaml</b>-ban.',
+    diag_footer: 'A hiányzó szenzorokat a <b>feedparser</b> integrációval kell létrehozni.',
     problems: {
       missing_entity:        { icon: '⚠️', text: 'Hiányzó entitás azonosító a konfigurációban.' },
       not_found:             { icon: '❌', text: 'Az entitás nem létezik a Home Assistantban.' },
       unavailable:           { icon: '🔌', text: 'Az entitás elérhetetlen vagy ismeretlen állapotban van.' },
-      no_articles_attribute: { icon: '🗂️', text: 'Az entitásnak nincs "articles" attribútuma.' },
+      no_entries_attribute:  { icon: '🗂️', text: 'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).' },
       empty:                 { icon: '📭', text: 'Az entitás elérhető, de még nincs benne cikk.' },
     },
-    cmd_hint: 'command_line szenzor szükséges:<br><b>entity_id:</b> {entity}<br><b>json_attributes:</b> articles',
+    cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
     ed: {
       card_title:          'Kártya címe',
       card_title_color:    'Kártya cím színe',
@@ -71,15 +65,15 @@ const RSS_LOCALES = {
   de: {
     no_articles: 'Keine Artikel zum Anzeigen.',
     diag_title: '⚠️ Sensor-Diagnose',
-    diag_footer: 'Fehlende Sensoren müssen als <code>command_line</code>-Sensoren in <b>configuration.yaml</b> erstellt werden.',
+    diag_footer: 'Fehlende Sensoren müssen mit der <b>feedparser</b>-Integration erstellt werden.',
     problems: {
       missing_entity:        { icon: '⚠️', text: 'Fehlende Entitäts-ID in der Konfiguration.' },
       not_found:             { icon: '❌', text: 'Entität existiert nicht in Home Assistant.' },
       unavailable:           { icon: '🔌', text: 'Entität ist nicht verfügbar oder in unbekanntem Zustand.' },
-      no_articles_attribute: { icon: '🗂️', text: 'Entität hat kein "articles"-Attribut.' },
+      no_entries_attribute:  { icon: '🗂️', text: 'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).' },
       empty:                 { icon: '📭', text: 'Entität ist erreichbar, enthält aber noch keine Artikel.' },
     },
-    cmd_hint: 'Ein command_line-Sensor ist erforderlich:<br><b>entity_id:</b> {entity}<br><b>json_attributes:</b> articles',
+    cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
     ed: {
       card_title:          'Kartentitel',
       card_title_color:    'Farbe Kartentitel',
@@ -130,7 +124,6 @@ class RssNewsCard extends HTMLElement {
     this._articles = [];
     this._lastStateKey = '';
     this._initialized = false;
-
   }
 
   static getConfigElement() {
@@ -140,7 +133,7 @@ class RssNewsCard extends HTMLElement {
   static getStubConfig() {
     return {
       title: 'News',
-      sources: [{ entity: 'sensor.telex_rss', name: 'Telex', color: '#e63946' }],
+      sources: [{ entity: 'sensor.news_feed', name: 'News Source', color: '#e63946' }],
       max_articles: 10,
       card_height: 400,
       show_description: true,
@@ -222,9 +215,9 @@ class RssNewsCard extends HTMLElement {
       const state = this._hass.states[source.entity];
       if (!state) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'not_found' }); continue; }
       if (state.state === 'unavailable' || state.state === 'unknown') { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'unavailable' }); continue; }
-      const articles = state.attributes.entries;
-      if (!Array.isArray(articles)) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'no_articles_attribute' }); continue; }
-      if (articles.length === 0) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'empty' }); }
+      const entries = state.attributes.entries;
+      if (!Array.isArray(entries)) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'no_entries_attribute' }); continue; }
+      if (entries.length === 0) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'empty' }); }
     }
     return issues;
   }
@@ -233,7 +226,7 @@ class RssNewsCard extends HTMLElement {
     const t = this._t();
     const rows = issues.map(issue => {
       const label = t.problems[issue.problem] || { icon: '❓', text: issue.problem };
-      const cmd = ['not_found','missing_entity','no_articles_attribute'].includes(issue.problem)
+      const cmd = ['not_found','missing_entity','no_entries_attribute'].includes(issue.problem)
         ? `<div style="margin-top:6px;padding:6px 8px;background:var(--secondary-background-color);border-radius:4px;font-family:monospace;font-size:11px;word-break:break-all;">${t.cmd_hint.replace('{entity}', issue.entity)}</div>` : '';
       return `<div style="padding:10px 12px;margin-bottom:8px;border-radius:6px;border-left:3px solid var(--warning-color,#ff9800);background:var(--secondary-background-color);">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
@@ -257,27 +250,27 @@ class RssNewsCard extends HTMLElement {
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
       if (!state) continue;
-      const articles = state.attributes.entries;
-      if (!Array.isArray(articles)) continue;
-      articles.forEach(a => all.push({ ...a, _sourceName: source.name || source.entity, _sourceColor: source.color || 'var(--primary-color)' }));
+      const entries = state.attributes.entries;
+      if (!Array.isArray(entries)) continue;
+      entries.forEach(a => all.push({ ...a, _sourceName: source.name || source.entity, _sourceColor: source.color || 'var(--primary-color)' }));
     }
-    all.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    // feedparser utilizes "published", fallback to standard "pubDate"
+    all.sort((a, b) => new Date(b.published || b.pubDate) - new Date(a.published || a.pubDate));
     return all.slice(0, this._config.max_articles);
   }
 
-  _formatDate(pubDate) {
+  _formatDate(dateStr) {
     try {
-      const d = new Date(pubDate);
-      if (isNaN(d.getTime())) return pubDate;
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
       return d.toLocaleString(this._getDateLocale(), {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
       });
-    } catch { return pubDate; }
+    } catch { return dateStr; }
   }
 
   _getVisited() {
-    // Use a module-level Set shared across all card instances on the page
     if (!window._rssNewsCardVisited) window._rssNewsCardVisited = new Set();
     return window._rssNewsCardVisited;
   }
@@ -294,7 +287,11 @@ class RssNewsCard extends HTMLElement {
     const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color } = this._config;
     const t = this._t();
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
-    return articles.map(a => `
+    return articles.map(a => {
+      // Allow fallback to summary if description is not available in the payload
+      const desc = a.description || a.summary;
+      const pubDate = a.published || a.pubDate;
+      return `
       <div class="rss-article-row" data-rss-url="${a.link}"
         style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--divider-color);cursor:pointer;-webkit-tap-highlight-color:transparent;">
         ${a.image && a.image.trim() !== '' ? `<img src="${a.image}" style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'"/>` : ''}
@@ -304,20 +301,19 @@ class RssNewsCard extends HTMLElement {
             <div style="font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               ${show_source ? `<span style="font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:${a._sourceColor};">${a._sourceName}</span>` : ''}
               ${(show_source && show_date) ? `<span style="opacity:0.4;">·</span>` : ''}
-              ${show_date ? `<span>${this._formatDate(a.pubDate)}</span>` : ''}
+              ${show_date ? `<span>${this._formatDate(pubDate)}</span>` : ''}
             </div>` : ''}
-          ${show_description && a.description ? `<div style="font-size:${desc_font_size}px;color:${desc_color || 'var(--secondary-text-color)'};line-height:1.4;white-space:normal;word-break:break-word;">${a.description}</div>` : ''}
+          ${show_description && desc ? `<div style="font-size:${desc_font_size}px;color:${desc_color || 'var(--secondary-text-color)'};line-height:1.4;white-space:normal;word-break:break-word;">${desc}</div>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   _handleLinkClick(url) {
-    // Android Companion App – native in-app browser
     if (window.externalApp?.openExternalUrl) {
       window.externalApp.openExternalUrl(url);
       return;
     }
-    // Desktop: centered popup window; mobile browsers/iOS: new tab (platform limitation)
     const w = Math.min(window.screen.width, 520);
     const h = Math.min(window.screen.height, 900);
     const left = Math.round((window.screen.width - w) / 2);
@@ -343,7 +339,6 @@ class RssNewsCard extends HTMLElement {
           <div class="rss-diag"></div>
           <div class="rss-scroll"><div class="rss-articles"></div></div>
         </div>
-
       </ha-card>`;
     this._initialized = true;
   }
@@ -369,7 +364,6 @@ class RssNewsCard extends HTMLElement {
     if (diagEl) diagEl.innerHTML = issues.length > 0 ? this._renderDiagnostics(issues) : '';
     if (artEl) {
       artEl.innerHTML = this._buildArticlesHtml(articles);
-      // Attach click listeners – popup on desktop, in-app modal on mobile/companion app
       artEl.querySelectorAll('.rss-article-row').forEach(row => {
         row.addEventListener('click', () => {
           const url = row.dataset.rssUrl;
@@ -380,7 +374,6 @@ class RssNewsCard extends HTMLElement {
           this._handleLinkClick(url);
         });
       });
-
     }
   }
 
@@ -402,7 +395,6 @@ class RssNewsCardEditor extends HTMLElement {
       this._renderShell();
     } else {
       this._syncFields();
-      // Only re-render sources if count changed (add/remove), not on field edits
       const newSourceCount = (this._config.sources || []).length;
       if (newSourceCount !== prevSourceCount) {
         this._renderSources();
@@ -527,22 +519,18 @@ class RssNewsCardEditor extends HTMLElement {
 
     this._renderSources();
     this._attachListeners();
-    // Sync color previews after DOM is ready
     requestAnimationFrame(() => this._syncColorPreviews());
   }
 
   _syncColorPreviews() {
-    // Find the card element via DOM traversal from the editor
     const card = this.closest('ha-card') || document.querySelector('rss-news-card');
     const syncPreview = (previewId, configVal, cssVar) => {
       const preview = this.querySelector(previewId);
       if (!preview) return;
       if (configVal) {
-        // Config has a value – use it directly
         preview.style.backgroundImage = 'none';
         preview.style.background = configVal;
       } else {
-        // No config value – read computed color from the card element
         if (card) {
           const computed = getComputedStyle(card).getPropertyValue(cssVar).trim();
           if (computed) {
@@ -551,7 +539,6 @@ class RssNewsCardEditor extends HTMLElement {
             return;
           }
         }
-        // Fallback: show transparent pattern
         preview.style.background = 'transparent';
         preview.style.backgroundImage = 'repeating-linear-gradient(45deg,#ccc 0,#ccc 2px,transparent 0,transparent 50%)';
         preview.style.backgroundSize = '6px 6px';
@@ -569,7 +556,7 @@ class RssNewsCardEditor extends HTMLElement {
     const sources = this._config.sources || [];
     container.innerHTML = sources.map((s, i) => `
       <div class="rss-src-row" data-idx="${i}">
-        <input type="text" style="flex:1;min-width:0;" placeholder="sensor.telex_rss" data-field="entity" value="${s.entity || ''}"/>
+        <input type="text" style="flex:1;min-width:0;" placeholder="sensor.news_feed" data-field="entity" value="${s.entity || ''}"/>
         <input type="text" style="width:80px;flex-shrink:0;" placeholder="Name" data-field="name" value="${s.name || ''}"/>
         <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
           <div style="position:absolute;inset:0;background:${s.color || '#0077cc'};pointer-events:none;" class="rss-color-preview-${i}"></div>
@@ -586,7 +573,6 @@ class RssNewsCardEditor extends HTMLElement {
         const sources = [...(this._config.sources || [])];
         sources[idx] = { ...sources[idx], [field]: input.value };
         this._upd('sources', sources);
-        // Update color preview div live
         if (field === 'color') {
           const preview = row.querySelector('.rss-color-preview-' + idx);
           if (preview) preview.style.background = input.value;
@@ -627,7 +613,6 @@ class RssNewsCardEditor extends HTMLElement {
     bind('#ed-article-title-color-text', 'article_title_color');
     bind('#ed-desc-color-text',          'desc_color');
 
-    // Color picker → text field + preview sync
     const bindColorPicker = (pickerId, textId, previewId, key) => {
       const picker = this.querySelector(pickerId);
       const text   = this.querySelector(textId);
@@ -639,7 +624,6 @@ class RssNewsCardEditor extends HTMLElement {
         if (preview) preview.style.background = val;
         this._upd(key, val);
       });
-      // Text field → preview sync
       if (text) {
         text.addEventListener('input', e => {
           const val = e.target.value;
@@ -700,6 +684,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'rss-news-card',
   name: 'RSS News Card',
-  description: 'Scrollable RSS news card with multi-source support.',
+  description: 'Scrollable RSS news card specifically mapped for the feedparser integration.',
   preview: true,
 });
