@@ -247,15 +247,34 @@ class RssNewsCard extends HTMLElement {
   _getArticles() {
     if (!this._hass) return [];
     let all = [];
+    
+    // Gather all articles from all sources
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
       if (!state) continue;
+      
       const entries = state.attributes.entries;
       if (!Array.isArray(entries)) continue;
-      entries.forEach(a => all.push({ ...a, _sourceName: source.name || source.entity, _sourceColor: source.color || 'var(--primary-color)' }));
+      
+      entries.forEach(a => all.push({ 
+        ...a, 
+        _sourceName: source.name || source.entity, 
+        _sourceColor: source.color || 'var(--primary-color)' 
+      }));
     }
-    // feedparser utilizes "published", fallback to standard "pubDate"
-    all.sort((a, b) => new Date(b.published || b.pubDate) - new Date(a.published || a.pubDate));
+
+    // Robust sorting: parse dates safely to prevent NaN from breaking the sort order
+    all.sort((a, b) => {
+      let timeA = new Date(a.published || a.pubDate || 0).getTime();
+      let timeB = new Date(b.published || b.pubDate || 0).getTime();
+      
+      // Fallback to 0 if the date string was invalid or unparseable
+      if (isNaN(timeA)) timeA = 0;
+      if (isNaN(timeB)) timeB = 0;
+      
+      return timeB - timeA; // Descending order (newest first)
+    });
+
     return all.slice(0, this._config.max_articles);
   }
 
