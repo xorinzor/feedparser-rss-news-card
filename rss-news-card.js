@@ -295,13 +295,14 @@ class RssNewsCard extends HTMLElement {
       if (!Array.isArray(entries)) continue;
       
       entries.forEach(a => {
-        console.log(`Article: "${a.title}" | Category:`, a.category, `| Type:`, typeof a.category, a);
-        
-        // If exclusions exist, check if the single category string directly matches an excluded item
-        if (excludeList.length > 0 && a.category) {
-          if (excludeList.includes(a.category.trim().toLowerCase())) {
-            return; // Skip pushing this article
-          }
+        // Python feedparser maps XML <category> to an array of objects called 'tags'
+        if (excludeList.length > 0 && Array.isArray(a.tags)) {
+          // Check if any tag object's "term" property matches your exclude list
+          const isExcluded = a.tags.some(tag => 
+            tag && tag.term && excludeList.includes(tag.term.trim().toLowerCase())
+          );
+          
+          if (isExcluded) return; // Skip pushing this article
         }
 
         all.push({ 
