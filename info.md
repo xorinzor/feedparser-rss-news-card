@@ -29,7 +29,7 @@ sensor:
     feed_url: 'https://www.nu.nl/rss/Algemeen'
     date_format: '%a, %d %b %Y %H:%M:%S %z'
     scan_interval:
-      minutes: 5
+      minutes: 30
     show_topn: 20
     inclusions:
       - title
