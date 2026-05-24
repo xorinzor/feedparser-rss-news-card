@@ -295,6 +295,8 @@ class RssNewsCard extends HTMLElement {
       if (!Array.isArray(entries)) continue;
       
       entries.forEach(a => {
+        console.log(`Article: "${a.title}" | Category:`, a.category, `| Type:`, typeof a.category, a);
+        
         // If exclusions exist, check if the single category string directly matches an excluded item
         if (excludeList.length > 0 && a.category) {
           if (excludeList.includes(a.category.trim().toLowerCase())) {
