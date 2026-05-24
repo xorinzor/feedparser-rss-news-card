@@ -18,6 +18,7 @@ const RSS_LOCALES = {
       desc_color:        'Description color',
       sources:           'Sources (entity · name · color)',
       add_source:        '+ Add source',
+      exclude_categories: 'Exclude categories (comma-separated)',
       max_articles:      'Max articles',
       card_height:       'Card height (px)',
       img_width:         'Image width (px)',
@@ -49,6 +50,7 @@ const RSS_LOCALES = {
       desc_color:          'Leírás színe',
       sources:             'Források (entitás · név · szín)',
       add_source:          '+ Forrás hozzáadása',
+      exclude_categories:  'Kizárt kategóriák (vesszővel elválasztva)',
       max_articles:        'Max cikkek száma',
       card_height:         'Kártya magassága (px)',
       img_width:           'Kép szélessége (px)',
@@ -80,6 +82,7 @@ const RSS_LOCALES = {
       desc_color:          'Farbe Beschreibung',
       sources:             'Quellen (Entität · Name · Farbe)',
       add_source:          '+ Quelle hinzufügen',
+      exclude_categories:  'Kategorien ausschließen (kommagetrennt)',
       max_articles:        'Max. Artikel',
       card_height:         'Kartenhöhe (px)',
       img_width:           'Bildbreite (px)',
@@ -132,6 +135,7 @@ class RssNewsCard extends HTMLElement {
     return {
       title: 'News',
       sources: [{ entity: 'sensor.feedparser_news', name: 'Feedparser Source', color: '#e63946' }],
+      exclude_categories: '',
       max_articles: 10,
       card_height: 400,
       show_description: true,
@@ -154,6 +158,7 @@ class RssNewsCard extends HTMLElement {
     this._config = {
       title:            config.title || '',
       sources:          config.sources,
+      exclude_categories: config.exclude_categories || '',
       max_articles:     config.max_articles || 10,
       card_height:      config.card_height || 400,
       show_description: config.show_description !== false,
@@ -217,31 +222,13 @@ class RssNewsCard extends HTMLElement {
     return issues;
   }
 
-  _renderDiagnostics(issues) {
-    const t = this._t();
-    const rows = issues.map(issue => {
-      const label = t.problems[issue.problem] || { icon: '❓', text: issue.problem };
-      const cmd = ['not_found','missing_entity','no_entries_attribute'].includes(issue.problem)
-        ? `<div style="margin-top:6px;padding:6px 8px;background:var(--secondary-background-color);border-radius:4px;font-family:monospace;font-size:11px;word-break:break-all;">${t.cmd_hint.replace('{entity}', issue.entity)}</div>` : '';
-      return `<div style="padding:10px 12px;margin-bottom:8px;border-radius:6px;border-left:3px solid var(--warning-color,#ff9800);background:var(--secondary-background-color);">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-          <span>${label.icon}</span>
-          <span style="font-weight:600;font-size:13px;color:var(--primary-text-color);">${issue.name}</span>
-          <code style="font-size:11px;color:var(--secondary-text-color);">${issue.entity}</code>
-        </div>
-        <div style="font-size:12px;color:var(--secondary-text-color);">${label.text}</div>${cmd}
-      </div>`;
-    }).join('');
-    return `<div style="padding:0 0 12px 0;">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--warning-color,#ff9800);margin-bottom:10px;">${t.diag_title}</div>
-      ${rows}
-      <div style="font-size:11px;color:var(--secondary-text-color);">${t.diag_footer}</div>
-    </div>`;
-  }
-
   _getArticles() {
     if (!this._hass) return [];
     let all = [];
+    
+    // Parse the excluded categories string into an array, lowercase it, and remove extra whitespace
+    const excludeString = this._config.exclude_categories || '';
+    const excludeList = excludeString.split(',').map(c => c.trim().toLowerCase()).filter(c => c.length > 0);
     
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
@@ -250,11 +237,28 @@ class RssNewsCard extends HTMLElement {
       const entries = state.attributes.entries;
       if (!Array.isArray(entries)) continue;
       
-      entries.forEach(a => all.push({ 
-        ...a, 
-        _sourceName: source.name || source.entity, 
-        _sourceColor: source.color || 'var(--primary-color)' 
-      }));
+      entries.forEach(a => {
+        // Filter by category if user defined any exclusions
+        if (excludeList.length > 0) {
+          let itemCats = [];
+          if (Array.isArray(a.categories)) itemCats = a.categories;
+          else if (typeof a.categories === 'string') itemCats = [a.categories];
+          else if (Array.isArray(a.category)) itemCats = a.category;
+          else if (typeof a.category === 'string') itemCats = [a.category];
+          
+          const isExcluded = itemCats.some(cat => 
+            excludeList.includes(String(cat).toLowerCase().trim())
+          );
+          
+          if (isExcluded) return; // Skip pushing this article
+        }
+
+        all.push({ 
+          ...a, 
+          _sourceName: source.name || source.entity, 
+          _sourceColor: source.color || 'var(--primary-color)' 
+        });
+      });
     }
 
     // Strict sorting strictly optimized for feedparser's 'published' attribute
@@ -458,6 +462,9 @@ class RssNewsCardEditor extends HTMLElement {
         <div id="ed-sources"></div>
         <button class="rss-add" id="ed-add">${t.ed.add_source}</button>
 
+        <label>${t.ed.exclude_categories}</label>
+        <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports" value="${c.exclude_categories || ''}"/>
+
         <label>${t.ed.max_articles}</label>
         <input type="number" id="ed-max" min="1" max="50" value="${c.max_articles || 10}"/>
 
@@ -614,6 +621,7 @@ class RssNewsCardEditor extends HTMLElement {
     };
 
     bind('#ed-title',    'title');
+    bind('#ed-exclude-cats', 'exclude_categories');
     bind('#ed-max',      'max_articles',    v => parseInt(v) || 10);
     bind('#ed-height',   'card_height',     v => parseInt(v) || 400);
     bind('#ed-imgw',     'image_width',     v => parseInt(v) || 100);
@@ -667,7 +675,9 @@ class RssNewsCardEditor extends HTMLElement {
     const c = this._config;
     const set = (id, val) => { const el = this.querySelector(id); if (el && document.activeElement !== el) el.value = val ?? ''; };
     const setChk = (id, val) => { const el = this.querySelector(id); if (el) el.checked = !!val; };
+    
     set('#ed-title',     c.title);
+    set('#ed-exclude-cats', c.exclude_categories);
     set('#ed-max',       c.max_articles);
     set('#ed-height',    c.card_height);
     set('#ed-imgw',      c.image_width);
