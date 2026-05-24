@@ -278,6 +278,31 @@ class RssNewsCard extends HTMLElement {
     }
     return issues;
   }
+
+  _renderDiagnostics() {
+    // Basic stub to prevent the crash. 
+    // If you have the original _renderDiagnostics code, use that instead!
+    if (!this._hass || !this._config) return '';
+    
+    let issues = [];
+    for (const source of this._config.sources) {
+      const state = this._hass.states[source.entity];
+      if (!state) {
+        issues.push(`Entity not found: ${source.entity}`);
+      }
+    }
+
+    if (issues.length === 0) return ''; // No issues, render nothing
+
+    return `
+      <div style="background: var(--error-color, #ffcccc); padding: 12px; margin-bottom: 8px; border-radius: 4px;">
+        <strong>⚠️ Sensor diagnostics</strong>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          ${issues.map(issue => `<li>${issue}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
   
   _getArticles() {
     if (!this._hass) return [];
