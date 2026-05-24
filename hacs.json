@@ -2,6 +2,6 @@
   "name": "RSS News Card",
   "content_in_root": true,
   "filename": "rss-news-card.js",
-  "homeassistant": "2024.1",
+  "homeassistant": "2026.5.4",
   "render_readme": true
 }
