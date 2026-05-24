@@ -117,8 +117,10 @@ function detectHaLanguage(hass) {
 }
 
 // ─── Date parsing ─────────────────────────────────────────────────────────────
-// feedparser returns published in the format "Sun, May 24 12:39 PM" (no year, no timezone).
-// new Date() cannot reliably parse this, so we handle it explicitly.
+// feedparser returns published as "Sun, May 24 12:39 PM" (no year, no timezone).
+// new Date() must NOT be tried on this format first — some JS engines partially
+// parse it (e.g. returning midnight), which collapses same-day timestamps and
+// breaks cross-source sort order. Match the feedparser pattern first.
 const MONTH_MAP = {
   jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
   jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
@@ -127,36 +129,33 @@ const MONTH_MAP = {
 function parsePublishedDate(str) {
   if (!str) return 0;
 
-  // Try native parse first (covers ISO 8601, RFC 2822 with year, etc.)
-  const native = new Date(str);
-  if (!isNaN(native.getTime())) return native.getTime();
-
-  // Handle feedparser format: "Sun, May 24 12:39 PM" or "May 24 12:39 PM"
-  // Strip optional leading "Www, "
-  const cleaned = str.replace(/^\w{3},\s*/, '').trim();
-  const match = cleaned.match(/^(\w+)\s+(\d{1,2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (match) {
-    const [, monthStr, dayStr, hourStr, minStr, ampm] = match;
+  // Strip optional weekday prefix ("Sun, " / "Sunday, ") then try feedparser pattern.
+  const cleaned = str.replace(/^\w+,\s*/, '').trim();
+  const m = cleaned.match(/^(\w+)\s+(\d{1,2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m) {
+    const [, monthStr, dayStr, hourStr, minStr, ampm] = m;
     const monthIdx = MONTH_MAP[monthStr.toLowerCase().slice(0, 3)];
-    if (monthIdx === undefined) return 0;
+    if (monthIdx !== undefined) {
+      let hour = parseInt(hourStr, 10);
+      const min = parseInt(minStr, 10);
+      const day = parseInt(dayStr, 10);
+      if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+      if (ampm.toUpperCase() === 'AM' && hour === 12) hour  = 0;
 
-    let hour = parseInt(hourStr, 10);
-    const min  = parseInt(minStr, 10);
-    const day  = parseInt(dayStr, 10);
-    if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-    if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
-
-    // Use current year; if the resulting date is in the future by more than
-    // 7 days assume it belongs to the previous year (handles year-boundary feeds).
-    const now  = new Date();
-    let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
-    if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
-      d = new Date(now.getFullYear() - 1, monthIdx, day, hour, min);
+      // Assume current year; push back one year if result is >7 days in the future
+      // (handles articles published just before New Year rolling over).
+      const now = new Date();
+      let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
+      if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
+        d = new Date(now.getFullYear() - 1, monthIdx, day, hour, min);
+      }
+      return d.getTime();
     }
-    return d.getTime();
   }
 
-  return 0;
+  // Fall back to native parsing for ISO 8601, full RFC 2822, etc.
+  const native = new Date(str);
+  return isNaN(native.getTime()) ? 0 : native.getTime();
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
@@ -304,7 +303,8 @@ class RssNewsCard extends HTMLElement {
       });
     }
 
-    // Sort using the dedicated parser that handles feedparser's "Sun, May 24 12:39 PM" format.
+    // Sort newest-first using the dedicated parser that handles feedparser's
+    // "Sun, May 24 12:39 PM" format (no year, no timezone).
     all.sort((a, b) => parsePublishedDate(b.published) - parsePublishedDate(a.published));
 
     return all.slice(0, this._config.max_articles);
