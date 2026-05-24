@@ -1,58 +1,44 @@
 # RSS News Card
 
-Scrollable RSS news card for Home Assistant with multi-source support, automatic language detection, and full visual editor.
+Scrollable RSS news card for Home Assistant with multi-source support, automatic language detection, category filtering, and a full visual editor, specifically mapped for the `feedparser` integration.
 
 ## Features
 
-- 📰 Multiple RSS sources in a single card, sorted by date
-- 🌍 Automatic language & date format detection from Home Assistant settings
-- 📱 iOS-compatible scrolling
-- 🎨 Visual editor with color picker, toggle switches, and font size controls
-- ⚠️ Built-in sensor diagnostics with setup instructions
-- 🌐 Community localization support (English, Hungarian, German included)
+* 📰 Multiple RSS sources in a single card, sorted by datetime
+* 🚫 Filter out unwanted news items by category/tag directly from the UI
+* 🌍 Automatic language & date format detection from Home Assistant settings
+* 📱 iOS-compatible scrolling
+* 🎨 Visual editor with color picker, toggle switches, and font size controls
+* ⚠️ Built-in sensor diagnostics to catch missing or misconfigured sensors
+* 🌐 Community localization support (English, Hungarian, German included)
 
 ## Requirements
 
-- `curl` and `jq` available in the HA container (default in most installations)
-- RSS sources configured as `command_line` sensors — see [README](https://github.com/yourusername/rss-news-card#readme) for setup
+* The [Feedparser](https://github.com/custom-components/sensor.feedparser) custom component installed via HACS.
 
 ## Quick start
 
-### Command line sensor in 'configuration.yaml'
+### Feedparser sensor in 'configuration.yaml'
+
+*Note: Ensure you include `tags` in your inclusions list if you plan to use the category filtering feature. The Python feedparser library standardizes `<category>` XML tags into the `tags` array!*
 
 ```yaml
-command_line:
-  - sensor:
-      name: "Your News Source1"
-      unique_id: news_source_1
-      icon: "mdi:rss"
-      scan_interval: 600
-      command: >-      
-        curl -sk "https://feeds.bbci.co.uk/news/world/europe/rss.xml" -A "Mozilla/5.0" | tr -d '\n' | sed 's/<item>/\n<item>/' | sed '1d' | sed 's/<!\[CDATA\[//g; s/\]\]>//g' | sed 's/<\/item>/\n/g' | grep '<item>' | head -5 | while read -r item; do
-          title=$(echo "$item" | sed 's/.*<title>\([^<]*\)<\/title>.*/\1/' | sed 's/^ *//;s/ *$//');
-          link=$(echo "$item" | sed 's/.*<link>\([^<]*\)<\/link>.*/\1/');
-          desc=$(echo "$item" | grep -oP '(?<=<description>).*?(?=</description>)' | sed 's/.*<p>\([^<]*\)<\/p>.*/\1/' | sed 's/<[^>]*>//g; s/The post.*//; s/^ *//;s/ *$//');
-          pub=$(echo "$item" | sed 's/.*<pubDate>\([^<]*\)<\/pubDate>.*/\1/' | awk '{
-            split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", m)
-            for(i=1;i<=12;i++) month[m[i]]=sprintf("%02d",i)
-            printf "%s-%s-%sT%s+02:00", $4, month[$3], $2, $5
-          }');
-          img=$(echo "$item" | grep -o 'enclosure url="[^"]*"' | sed 's/enclosure url="//;s/"$//' | head -1);
-          if [ -z "$img" ]; then
-            img=$(echo "$item" | grep -o 'media:content[^>]*url="[^"]*"' | grep -o 'url="[^"]*"' | sed 's/url="//;s/"$//' | head -1);
-          fi;
-          if [ -z "$img" ]; then
-            img=$(echo "$item" | grep -oP '<img[^>]+src=" \K[^"]+' | head -1);
-            if [ -z "$img" ]; then
-                img=$(echo "$item" | grep -oE '<img[^>]+src="[^"]+"' | head -1 | cut -d'"' -f2);
-            fi
-          fi;
-          jq -n --arg t "$title" --arg l "$link" --arg d "$desc" --arg p "$pub" --arg i "$img" \
-            '{title:$t, link:$l, description:$d, pubDate:$p, image:$i}';
-        done | jq -sc '{"articles": .}'   
-      value_template: "{{ value_json.articles | count }} cikk"
-      json_attributes:
-        - articles   
+sensor:
+  - platform: feedparser
+    name: "rss_nu_nl_feed"
+    feed_url: 'https://www.nu.nl/rss/Algemeen'
+    date_format: '%a, %d %b %Y %H:%M:%S %z'
+    scan_interval:
+      minutes: 5
+    show_topn: 20
+    inclusions:
+      - title
+      - link
+      - description
+      - image # optional, not shown if not present
+      - published
+      - tags
+
 ```
 
 ### Card config example
@@ -67,11 +53,13 @@ show_source: true
 show_date: true
 image_width: 100
 image_height: 70
+exclude_categories: formule-1, voetbal
 sources:
-  - entity: sensor.your_news_source1
-    name: News 1
+  - entity: sensor.rss_nu_nl_feed
+    name: NU.nl Algemeen
     color: "#e63946"
-  - entity: sensor.your_news_source2
-    name: News 2 
+  - entity: sensor.rss_another_feed
+    name: Tech News
     color: "#0077cc"
+
 ```
