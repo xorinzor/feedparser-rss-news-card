@@ -25,6 +25,7 @@ const RSS_LOCALES = {
       img_height:        'Image height (px)',
       show_source:       'Show source name',
       show_date:         'Show date',
+      date_format:       'Date format (e.g. YYYY-MM-DD HH:mm)',
       show_desc:         'Show description',
       title_size:        'Article title font size (px)',
       desc_size:         'Description font size (px)',
@@ -57,6 +58,7 @@ const RSS_LOCALES = {
       img_height:          'Kép magassága (px)',
       show_source:         'Forrás neve látható',
       show_date:           'Dátum látható',
+      date_format:         'Dátum formátum (pl. YYYY-MM-DD HH:mm)',
       show_desc:           'Leírás látható',
       title_size:          'Cím betűmérete (px)',
       desc_size:           'Leírás betűmérete (px)',
@@ -89,6 +91,7 @@ const RSS_LOCALES = {
       img_height:          'Bildhöhe (px)',
       show_source:         'Quellenname anzeigen',
       show_date:           'Datum anzeigen',
+      date_format:         'Datumsformat (z.B. YYYY-MM-DD HH:mm)',
       show_desc:           'Beschreibung anzeigen',
       title_size:          'Schriftgröße Artikeltitel (px)',
       desc_size:           'Schriftgröße Beschreibung (px)',
@@ -116,61 +119,62 @@ function detectHaLanguage(hass) {
   } catch { return 'en'; }
 }
 
-// ─── Date parsing ─────────────────────────────────────────────────────────────
-// feedparser's published format lacks a year: e.g. "Sun, May 24 12:39 PM".
-// new Date() partially parses this in some engines (returning midnight or an
-// incorrect date), so every comparator returns 0 and the sort is a no-op.
-// We parse manually first, then fall back to native Date for other formats.
-const MONTH_MAP = {
-  jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
-  jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
+// ─── Date parsing ─────────────────────────────────────────────────────────────const MONTH_MAP = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
 };
 
 function parsePublishedDate(str) {
   if (!str) return 0;
 
-  // Strip optional weekday prefix — handles "Sun, ", "Sunday, ", "Sun " etc.
+  // 1. Try standard browser parsing first
+  const nativeTimestamp = Date.parse(str);
+  if (!isNaN(nativeTimestamp)) return nativeTimestamp;
+
+  // 2. Handle Custom/Incomplete formats (missing years)
+  // Clean string: Remove day-of-week (e.g., "Mon, ")
   const cleaned = str.replace(/^[A-Za-z]+,?\s+/, '').trim();
+  
+  // Regex to capture: Month/Day and Time
+  // Matches: "Jan 1, 10:00 PM" OR "01 Jan, 10:00"
+  const regex = /^([A-Za-z]+|\d{1,2})\s+([A-Za-z]+|\d{1,2}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)?$/i;
+  const match = cleaned.match(regex);
 
-  // Match both "May 24 12:39 PM" (month-day 12h) and "May 24 14:39" (month-day 24h)
-  // and "24 May 12:39 PM" / "24 May 14:39" (day-month variants).
-  // Also tolerates an optional comma between day and time: "May 24, 12:39 PM".
-  const m12 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  const m24 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{2}):(\d{2})$/);
-  const dm12 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  const dm24 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{2}):(\d{2})$/);
+  if (match) {
+    let [_, p1, p2, hour, min, ampm] = match;
+    
+    // Determine Month and Day index from the two parts (p1 and p2)
+    let monthIdx, day;
+    const p1Month = MONTH_MAP[p1.toLowerCase().slice(0, 3)];
+    const p2Month = MONTH_MAP[p2.toLowerCase().slice(0, 3)];
 
-  let monthStr, dayStr, hourStr, minStr, ampm = null;
+    if (p1Month !== undefined) { monthIdx = p1Month; day = parseInt(p2, 10); }
+    else { monthIdx = p2Month; day = parseInt(p1, 10); }
 
-  if (m12)       { [, monthStr, dayStr, hourStr, minStr, ampm] = m12; }
-  else if (m24)  { [, monthStr, dayStr, hourStr, minStr]       = m24; }
-  else if (dm12) { [, dayStr, monthStr, hourStr, minStr, ampm] = dm12; }
-  else if (dm24) { [, dayStr, monthStr, hourStr, minStr]       = dm24; }
+    if (monthIdx !== undefined && !isNaN(day)) {
+      let h = parseInt(hour, 10);
+      const m = parseInt(min, 10);
 
-  if (monthStr) {
-    const monthIdx = MONTH_MAP[monthStr.toLowerCase().slice(0, 3)];
-    if (monthIdx !== undefined) {
-      let hour = parseInt(hourStr, 10);
-      const min = parseInt(minStr, 10);
-      const day = parseInt(dayStr, 10);
+      // Convert 12h to 24h
       if (ampm) {
-        if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-        if (ampm.toUpperCase() === 'AM' && hour === 12) hour  =  0;
+        if (ampm.toUpperCase() === 'PM' && h !== 12) h += 12;
+        if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
       }
-      // Assume current year; step back one year if the result is >7 days in the
-      // future (e.g. a Dec 31 article seen on Jan 1).
+
+      // Handle Year (Assuming current or previous year)
       const now = new Date();
-      let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
+      let d = new Date(now.getFullYear(), monthIdx, day, h, m);
+      
+      // If the result is more than 7 days in the future, assume it was last year
       if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
-        d = new Date(now.getFullYear() - 1, monthIdx, day, hour, min);
+        d.setFullYear(now.getFullYear() - 1);
       }
+      
       return d.getTime();
     }
   }
 
-  // Fall back to native parsing for ISO 8601, full RFC 2822 (with year), etc.
-  const native = new Date(str);
-  return isNaN(native.getTime()) ? 0 : native.getTime();
+  return 0; // Return 0 if all parsing attempts fail
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
@@ -198,6 +202,7 @@ class RssNewsCard extends HTMLElement {
       show_description: true,
       show_source: true,
       show_date: true,
+      date_format: '',
       image_width: 100,
       image_height: 70,
       title_font_size: 15,
@@ -221,6 +226,7 @@ class RssNewsCard extends HTMLElement {
       show_description: config.show_description !== false,
       show_source:      config.show_source !== false,
       show_date:        config.show_date !== false,
+      date_format:      config.date_format || '',
       image_width:      config.image_width || 100,
       image_height:     config.image_height || 70,
       title_font_size:  config.title_font_size || 15,
@@ -282,46 +288,28 @@ class RssNewsCard extends HTMLElement {
   _getArticles() {
     if (!this._hass) return [];
     let all = [];
-    
-    // Parse the excluded categories string into an array, lowercase it, and remove extra whitespace
     const excludeString = this._config.exclude_categories || '';
     const excludeList = excludeString.split(',').map(c => c.trim().toLowerCase()).filter(c => c.length > 0);
     
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
       if (!state) continue;
-      
       const entries = state.attributes.entries;
       if (!Array.isArray(entries)) continue;
-      
       entries.forEach(a => {
-        // Filter by category if user defined any exclusions
         if (excludeList.length > 0) {
           let itemCats = [];
           if (Array.isArray(a.categories)) itemCats = a.categories;
           else if (typeof a.categories === 'string') itemCats = [a.categories];
           else if (Array.isArray(a.category)) itemCats = a.category;
           else if (typeof a.category === 'string') itemCats = [a.category];
-          
-          const isExcluded = itemCats.some(cat => 
-            excludeList.includes(String(cat).toLowerCase().trim())
-          );
-          
-          if (isExcluded) return; // Skip pushing this article
+          const isExcluded = itemCats.some(cat => excludeList.includes(String(cat).toLowerCase().trim()));
+          if (isExcluded) return;
         }
-
-        all.push({ 
-          ...a, 
-          _sourceName: source.name || source.entity, 
-          _sourceColor: source.color || 'var(--primary-color)' 
-        });
+        all.push({ ...a, _sourceName: source.name || source.entity, _sourceColor: source.color || 'var(--primary-color)' });
       });
     }
-
-    // Sort newest-first using the dedicated parser that handles feedparser's
-    // "Sun, May 24 12:39 PM" format (no year, no timezone).
     all.sort((a, b) => parsePublishedDate(b.published) - parsePublishedDate(a.published));
-
     return all.slice(0, this._config.max_articles);
   }
 
@@ -329,7 +317,24 @@ class RssNewsCard extends HTMLElement {
     try {
       const ts = parsePublishedDate(dateStr);
       if (!ts) return dateStr;
-      return new Date(ts).toLocaleString(this._getDateLocale(), {
+      
+      const date = new Date(ts);
+      const fmt = this._config.date_format;
+      
+      if (fmt && typeof fmt === 'string' && fmt.trim() !== '') {
+        const pad = (n) => String(n).padStart(2, '0');
+        const map = {
+          YYYY: date.getFullYear(),
+          MM: pad(date.getMonth() + 1),
+          DD: pad(date.getDate()),
+          HH: pad(date.getHours()),
+          mm: pad(date.getMinutes()),
+          ss: pad(date.getSeconds())
+        };
+        return fmt.replace(/YYYY|MM|DD|HH|mm|ss/g, match => map[match]);
+      }
+
+      return date.toLocaleString(this._getDateLocale(), {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
       });
@@ -341,13 +346,9 @@ class RssNewsCard extends HTMLElement {
     return window._rssNewsCardVisited;
   }
 
-  _markVisited(url) {
-    this._getVisited().add(url);
-  }
+  _markVisited(url) { this._getVisited().add(url); }
 
-  _isVisited(url) {
-    return this._getVisited().has(url);
-  }
+  _isVisited(url) { return this._getVisited().has(url); }
 
   _buildArticlesHtml(articles) {
     const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color } = this._config;
@@ -355,10 +356,8 @@ class RssNewsCard extends HTMLElement {
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
     
     return articles.map(a => {
-      // feedparser exposes the article body as 'summary', not 'description'
       const desc = a.summary;
       const pubDate = a.published;
-      
       return `
       <div class="rss-article-row" data-rss-url="${a.link}"
         style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--divider-color);cursor:pointer;-webkit-tap-highlight-color:transparent;">
@@ -386,11 +385,7 @@ class RssNewsCard extends HTMLElement {
     const h = Math.min(window.screen.height, 900);
     const left = Math.round((window.screen.width - w) / 2);
     const top  = Math.round((window.screen.height - h) / 2);
-    window.open(
-      url, 'rss_article',
-      `width=${w},height=${h},left=${left},top=${top},` +
-      'toolbar=no,menubar=no,scrollbars=yes,resizable=yes'
-    );
+    window.open(url, 'rss_article', `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`);
   }
 
   _render() {
@@ -413,17 +408,14 @@ class RssNewsCard extends HTMLElement {
   _updateContent(articles, issues) {
     if (!this._initialized) this._render();
     const { title, card_height, card_title_color } = this._config;
-
     const titleEl = this.querySelector('.rss-title-el');
     if (titleEl) {
       titleEl.className = title ? 'rss-title-el rss-title' : 'rss-title-el';
       titleEl.style.color = card_title_color || 'var(--primary-text-color)';
       titleEl.textContent = title || '';
     }
-
     const scrollEl = this.querySelector('.rss-scroll');
     if (scrollEl) scrollEl.style.height = (card_height || 400) + 'px';
-
     const diagEl = this.querySelector('.rss-diag');
     const artEl = this.querySelector('.rss-articles');
     if (diagEl) diagEl.innerHTML = issues.length > 0 ? this._renderDiagnostics(issues) : '';
@@ -441,7 +433,6 @@ class RssNewsCard extends HTMLElement {
       });
     }
   }
-
   getCardSize() { return 5; }
 }
 
@@ -452,7 +443,6 @@ class RssNewsCardEditor extends HTMLElement {
     this._config = {};
     this._rendered = false;
   }
-
   setConfig(config) {
     const prevSourceCount = (this._config.sources || []).length;
     this._config = { ...config };
@@ -461,31 +451,25 @@ class RssNewsCardEditor extends HTMLElement {
     } else {
       this._syncFields();
       const newSourceCount = (this._config.sources || []).length;
-      if (newSourceCount !== prevSourceCount) {
-        this._renderSources();
-      }
+      if (newSourceCount !== prevSourceCount) this._renderSources();
     }
   }
-
   set hass(hass) {
     this._hass = hass;
     if (!this._rendered) this._renderShell();
   }
-
   _getLang() {
     try {
       const haLang = this._hass?.locale?.language || this._hass?.language || 'en';
       return haLang.split('-')[0].toLowerCase();
     } catch { return 'en'; }
   }
-
   _t() { return getLocale(this._getLang()); }
 
   _renderShell() {
     this._rendered = true;
     const c = this._config || {};
     const t = this._t();
-
     this.innerHTML = `
       <style>
         .rss-ed{padding:12px;}
@@ -507,32 +491,23 @@ class RssNewsCardEditor extends HTMLElement {
       <div class="rss-ed">
         <label>${t.ed.card_title}</label>
         <input type="text" id="ed-title" value="${c.title || ''}"/>
-
         <label>${t.ed.sources}</label>
         <div id="ed-sources"></div>
         <button class="rss-add" id="ed-add">${t.ed.add_source}</button>
-
         <label>${t.ed.exclude_categories}</label>
         <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports" value="${c.exclude_categories || ''}"/>
-
         <label>${t.ed.max_articles}</label>
         <input type="number" id="ed-max" min="1" max="50" value="${c.max_articles || 10}"/>
-
         <label>${t.ed.card_height}</label>
         <input type="number" id="ed-height" min="100" max="2000" value="${c.card_height || 400}"/>
-
         <label>${t.ed.img_width}</label>
         <input type="number" id="ed-imgw" min="50" max="300" value="${c.image_width || 100}"/>
-
         <label>${t.ed.img_height}</label>
         <input type="number" id="ed-imgh" min="50" max="300" value="${c.image_height || 70}"/>
-
         <label>${t.ed.title_size}</label>
         <input type="number" id="ed-titlesize" min="10" max="30" value="${c.title_font_size || 15}"/>
-
         <label>${t.ed.desc_size}</label>
         <input type="number" id="ed-descsize" min="10" max="24" value="${c.desc_font_size || 14}"/>
-
         <label>${t.ed.card_title_color} <small style="opacity:0.6;">(${t.ed.color_hint})</small></label>
         <div style="display:flex;gap:8px;align-items:center;">
           <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
@@ -541,7 +516,6 @@ class RssNewsCardEditor extends HTMLElement {
           </label>
           <input type="text" id="ed-card-title-color-text" placeholder="e.g. #ff0000 or empty" value="${c.card_title_color || ''}"/>
         </div>
-
         <label>${t.ed.article_title_color} <small style="opacity:0.6;">(${t.ed.color_hint})</small></label>
         <div style="display:flex;gap:8px;align-items:center;">
           <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
@@ -550,7 +524,6 @@ class RssNewsCardEditor extends HTMLElement {
           </label>
           <input type="text" id="ed-article-title-color-text" placeholder="e.g. #ff0000 or empty" value="${c.article_title_color || ''}"/>
         </div>
-
         <label>${t.ed.desc_color} <small style="opacity:0.6;">(${t.ed.color_hint})</small></label>
         <div style="display:flex;gap:8px;align-items:center;">
           <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
@@ -559,7 +532,6 @@ class RssNewsCardEditor extends HTMLElement {
           </label>
           <input type="text" id="ed-desc-color-text" placeholder="e.g. #ff0000 or empty" value="${c.desc_color || ''}"/>
         </div>
-
         <div style="margin-top:12px;">
           <div class="rss-toggle-row">
             <label for="tog-source">${t.ed.show_source}</label>
@@ -575,6 +547,8 @@ class RssNewsCardEditor extends HTMLElement {
               <span class="rss-slider"></span>
             </label>
           </div>
+          <label>${t.ed.date_format}</label>
+          <input type="text" id="ed-dateformat" placeholder="e.g. YYYY-MM-DD HH:mm" value="${c.date_format || ''}"/>
           <div class="rss-toggle-row">
             <label for="tog-desc">${t.ed.show_desc}</label>
             <label class="rss-toggle">
@@ -584,7 +558,6 @@ class RssNewsCardEditor extends HTMLElement {
           </div>
         </div>
       </div>`;
-
     this._renderSources();
     this._attachListeners();
     requestAnimationFrame(() => this._syncColorPreviews());
@@ -632,7 +605,6 @@ class RssNewsCardEditor extends HTMLElement {
         </label>
         <button class="rss-del" data-idx="${i}">✕</button>
       </div>`).join('');
-
     container.querySelectorAll('input').forEach(input => {
       input.addEventListener('input', () => {
         const row = input.closest('.rss-src-row');
@@ -647,7 +619,6 @@ class RssNewsCardEditor extends HTMLElement {
         }
       });
     });
-
     container.querySelectorAll('.rss-del').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.idx);
@@ -678,6 +649,7 @@ class RssNewsCardEditor extends HTMLElement {
     bind('#ed-imgh',     'image_height',    v => parseInt(v) || 70);
     bind('#ed-titlesize','title_font_size', v => parseInt(v) || 15);
     bind('#ed-descsize', 'desc_font_size',  v => parseInt(v) || 14);
+    bind('#ed-dateformat', 'date_format');
     bind('#ed-card-title-color-text',    'card_title_color');
     bind('#ed-article-title-color-text', 'article_title_color');
     bind('#ed-desc-color-text',          'desc_color');
@@ -734,6 +706,7 @@ class RssNewsCardEditor extends HTMLElement {
     set('#ed-imgh',      c.image_height);
     set('#ed-titlesize', c.title_font_size);
     set('#ed-descsize',  c.desc_font_size);
+    set('#ed-dateformat', c.date_format);
     set('#ed-card-title-color-text',    c.card_title_color);
     set('#ed-article-title-color-text', c.article_title_color);
     set('#ed-desc-color-text',          c.desc_color);
