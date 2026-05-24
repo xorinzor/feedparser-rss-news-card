@@ -278,7 +278,7 @@ class RssNewsCard extends HTMLElement {
     }
     return issues;
   }
-
+  
   _getArticles() {
     if (!this._hass) return [];
     let all = [];
@@ -295,19 +295,11 @@ class RssNewsCard extends HTMLElement {
       if (!Array.isArray(entries)) continue;
       
       entries.forEach(a => {
-        // Filter by category if user defined any exclusions
-        if (excludeList.length > 0) {
-          let itemCats = [];
-          if (Array.isArray(a.categories)) itemCats = a.categories;
-          else if (typeof a.categories === 'string') itemCats = [a.categories];
-          else if (Array.isArray(a.category)) itemCats = a.category;
-          else if (typeof a.category === 'string') itemCats = [a.category];
-          
-          const isExcluded = itemCats.some(cat => 
-            excludeList.includes(String(cat).toLowerCase().trim())
-          );
-          
-          if (isExcluded) return; // Skip pushing this article
+        // If exclusions exist, check if the single category string directly matches an excluded item
+        if (excludeList.length > 0 && a.category) {
+          if (excludeList.includes(a.category.trim().toLowerCase())) {
+            return; // Skip pushing this article
+          }
         }
 
         all.push({ 
