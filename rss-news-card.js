@@ -117,10 +117,10 @@ function detectHaLanguage(hass) {
 }
 
 // ─── Date parsing ─────────────────────────────────────────────────────────────
-// feedparser returns published as "Sun, May 24 12:39 PM" (no year, no timezone).
-// new Date() must NOT be tried on this format first — some JS engines partially
-// parse it (e.g. returning midnight), which collapses same-day timestamps and
-// breaks cross-source sort order. Match the feedparser pattern first.
+// feedparser's published format lacks a year: e.g. "Sun, May 24 12:39 PM".
+// new Date() partially parses this in some engines (returning midnight or an
+// incorrect date), so every comparator returns 0 and the sort is a no-op.
+// We parse manually first, then fall back to native Date for other formats.
 const MONTH_MAP = {
   jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
   jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
@@ -129,21 +129,36 @@ const MONTH_MAP = {
 function parsePublishedDate(str) {
   if (!str) return 0;
 
-  // Strip optional weekday prefix ("Sun, " / "Sunday, ") then try feedparser pattern.
-  const cleaned = str.replace(/^\w+,\s*/, '').trim();
-  const m = cleaned.match(/^(\w+)\s+(\d{1,2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (m) {
-    const [, monthStr, dayStr, hourStr, minStr, ampm] = m;
+  // Strip optional weekday prefix — handles "Sun, ", "Sunday, ", "Sun " etc.
+  const cleaned = str.replace(/^[A-Za-z]+,?\s+/, '').trim();
+
+  // Match both "May 24 12:39 PM" (month-day 12h) and "May 24 14:39" (month-day 24h)
+  // and "24 May 12:39 PM" / "24 May 14:39" (day-month variants).
+  // Also tolerates an optional comma between day and time: "May 24, 12:39 PM".
+  const m12 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const m24 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{2}):(\d{2})$/);
+  const dm12 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const dm24 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{2}):(\d{2})$/);
+
+  let monthStr, dayStr, hourStr, minStr, ampm = null;
+
+  if (m12)       { [, monthStr, dayStr, hourStr, minStr, ampm] = m12; }
+  else if (m24)  { [, monthStr, dayStr, hourStr, minStr]       = m24; }
+  else if (dm12) { [, dayStr, monthStr, hourStr, minStr, ampm] = dm12; }
+  else if (dm24) { [, dayStr, monthStr, hourStr, minStr]       = dm24; }
+
+  if (monthStr) {
     const monthIdx = MONTH_MAP[monthStr.toLowerCase().slice(0, 3)];
     if (monthIdx !== undefined) {
       let hour = parseInt(hourStr, 10);
       const min = parseInt(minStr, 10);
       const day = parseInt(dayStr, 10);
-      if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-      if (ampm.toUpperCase() === 'AM' && hour === 12) hour  = 0;
-
-      // Assume current year; push back one year if result is >7 days in the future
-      // (handles articles published just before New Year rolling over).
+      if (ampm) {
+        if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+        if (ampm.toUpperCase() === 'AM' && hour === 12) hour  =  0;
+      }
+      // Assume current year; step back one year if the result is >7 days in the
+      // future (e.g. a Dec 31 article seen on Jan 1).
       const now = new Date();
       let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
       if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
@@ -153,7 +168,7 @@ function parsePublishedDate(str) {
     }
   }
 
-  // Fall back to native parsing for ISO 8601, full RFC 2822, etc.
+  // Fall back to native parsing for ISO 8601, full RFC 2822 (with year), etc.
   const native = new Date(str);
   return isNaN(native.getTime()) ? 0 : native.getTime();
 }
@@ -312,9 +327,9 @@ class RssNewsCard extends HTMLElement {
 
   _formatDate(dateStr) {
     try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return d.toLocaleString(this._getDateLocale(), {
+      const ts = parsePublishedDate(dateStr);
+      if (!ts) return dateStr;
+      return new Date(ts).toLocaleString(this._getDateLocale(), {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
       });
