@@ -10,7 +10,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Entity has no "entries" attribute (check feedparser configuration).' },
       empty:                 { icon: '📭', text: 'Entity is reachable but contains no articles yet.' },
     },
-    cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
+    cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
     ed: {
       card_title:        'Card title',
       card_title_color:  'Card title color',
@@ -42,7 +42,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).' },
       empty:                 { icon: '📭', text: 'Az entitás elérhető, de még nincs benne cikk.' },
     },
-    cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
+    cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
     ed: {
       card_title:          'Kártya cime',
       card_title_color:    'Kártya cím színe',
@@ -74,7 +74,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).' },
       empty:                 { icon: '📭', text: 'Entität ist erreichbar, enthält aber noch keine Artikel.' },
     },
-    cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, description, image, published',
+    cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
     ed: {
       card_title:          'Kartentitel',
       card_title_color:    'Farbe Kartentitel',
@@ -114,6 +114,49 @@ function detectHaLanguage(hass) {
   try {
     return hass?.locale?.language || hass?.language || 'en';
   } catch { return 'en'; }
+}
+
+// ─── Date parsing ─────────────────────────────────────────────────────────────
+// feedparser returns published in the format "Sun, May 24 12:39 PM" (no year, no timezone).
+// new Date() cannot reliably parse this, so we handle it explicitly.
+const MONTH_MAP = {
+  jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
+  jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
+};
+
+function parsePublishedDate(str) {
+  if (!str) return 0;
+
+  // Try native parse first (covers ISO 8601, RFC 2822 with year, etc.)
+  const native = new Date(str);
+  if (!isNaN(native.getTime())) return native.getTime();
+
+  // Handle feedparser format: "Sun, May 24 12:39 PM" or "May 24 12:39 PM"
+  // Strip optional leading "Www, "
+  const cleaned = str.replace(/^\w{3},\s*/, '').trim();
+  const match = cleaned.match(/^(\w+)\s+(\d{1,2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (match) {
+    const [, monthStr, dayStr, hourStr, minStr, ampm] = match;
+    const monthIdx = MONTH_MAP[monthStr.toLowerCase().slice(0, 3)];
+    if (monthIdx === undefined) return 0;
+
+    let hour = parseInt(hourStr, 10);
+    const min  = parseInt(minStr, 10);
+    const day  = parseInt(dayStr, 10);
+    if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+    if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+
+    // Use current year; if the resulting date is in the future by more than
+    // 7 days assume it belongs to the previous year (handles year-boundary feeds).
+    const now  = new Date();
+    let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
+    if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
+      d = new Date(now.getFullYear() - 1, monthIdx, day, hour, min);
+    }
+    return d.getTime();
+  }
+
+  return 0;
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
@@ -261,16 +304,8 @@ class RssNewsCard extends HTMLElement {
       });
     }
 
-    // Strict sorting strictly optimized for feedparser's 'published' attribute
-    all.sort((a, b) => {
-      let timeA = new Date(a.published || 0).getTime();
-      let timeB = new Date(b.published || 0).getTime();
-      
-      if (isNaN(timeA)) timeA = 0;
-      if (isNaN(timeB)) timeB = 0;
-      
-      return timeB - timeA;
-    });
+    // Sort using the dedicated parser that handles feedparser's "Sun, May 24 12:39 PM" format.
+    all.sort((a, b) => parsePublishedDate(b.published) - parsePublishedDate(a.published));
 
     return all.slice(0, this._config.max_articles);
   }
@@ -305,8 +340,8 @@ class RssNewsCard extends HTMLElement {
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
     
     return articles.map(a => {
-      // Stripped of unneeded non-feedparser properties (summary, pubDate)
-      const desc = a.description;
+      // feedparser exposes the article body as 'summary', not 'description'
+      const desc = a.summary;
       const pubDate = a.published;
       
       return `
