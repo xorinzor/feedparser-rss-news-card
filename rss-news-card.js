@@ -222,7 +222,7 @@ class RssNewsCard extends HTMLElement {
       const state = this._hass.states[source.entity];
       if (!state) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'not_found' }); continue; }
       if (state.state === 'unavailable' || state.state === 'unknown') { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'unavailable' }); continue; }
-      const articles = state.attributes.articles;
+      const articles = state.attributes.entries;
       if (!Array.isArray(articles)) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'no_articles_attribute' }); continue; }
       if (articles.length === 0) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'empty' }); }
     }
@@ -257,7 +257,7 @@ class RssNewsCard extends HTMLElement {
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
       if (!state) continue;
-      const articles = state.attributes.articles;
+      const articles = state.attributes.entries;
       if (!Array.isArray(articles)) continue;
       articles.forEach(a => all.push({ ...a, _sourceName: source.name || source.entity, _sourceColor: source.color || 'var(--primary-color)' }));
     }
