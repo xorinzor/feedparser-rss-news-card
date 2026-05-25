@@ -117,10 +117,6 @@ function detectHaLanguage(hass) {
 }
 
 // ─── Date parsing ─────────────────────────────────────────────────────────────
-// feedparser's published format lacks a year: e.g. "Sun, May 24 12:39 PM".
-// new Date() partially parses this in some engines (returning midnight or an
-// incorrect date), so every comparator returns 0 and the sort is a no-op.
-// We parse manually first, then fall back to native Date for other formats.
 const MONTH_MAP = {
   jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
   jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
@@ -129,12 +125,7 @@ const MONTH_MAP = {
 function parsePublishedDate(str) {
   if (!str) return 0;
 
-  // Strip optional weekday prefix — handles "Sun, ", "Sunday, ", "Sun " etc.
   const cleaned = str.replace(/^[A-Za-z]+,?\s+/, '').trim();
-
-  // Match both "May 24 12:39 PM" (month-day 12h) and "May 24 14:39" (month-day 24h)
-  // and "24 May 12:39 PM" / "24 May 14:39" (day-month variants).
-  // Also tolerates an optional comma between day and time: "May 24, 12:39 PM".
   const m12 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   const m24 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{2}):(\d{2})$/);
   const dm12 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
@@ -157,8 +148,6 @@ function parsePublishedDate(str) {
         if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
         if (ampm.toUpperCase() === 'AM' && hour === 12) hour  =  0;
       }
-      // Assume current year; step back one year if the result is >7 days in the
-      // future (e.g. a Dec 31 article seen on Jan 1).
       const now = new Date();
       let d = new Date(now.getFullYear(), monthIdx, day, hour, min);
       if (d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
@@ -168,13 +157,12 @@ function parsePublishedDate(str) {
     }
   }
 
-  // Fall back to native parsing for ISO 8601, full RFC 2822 (with year), etc.
   const native = new Date(str);
   return isNaN(native.getTime()) ? 0 : native.getTime();
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
-class RssNewsCard extends HTMLElement {
+class FeedparserRssNewsCard extends HTMLElement {
   constructor() {
     super();
     this._config = {};
@@ -185,7 +173,7 @@ class RssNewsCard extends HTMLElement {
   }
 
   static getConfigElement() {
-    return document.createElement('rss-news-card-editor');
+    return document.createElement('feedparser-rss-news-card-editor');
   }
 
   static getStubConfig() {
@@ -280,8 +268,6 @@ class RssNewsCard extends HTMLElement {
   }
 
   _renderDiagnostics() {
-    // Basic stub to prevent the crash. 
-    // If you have the original _renderDiagnostics code, use that instead!
     if (!this._hass || !this._config) return '';
     
     let issues = [];
@@ -292,7 +278,7 @@ class RssNewsCard extends HTMLElement {
       }
     }
 
-    if (issues.length === 0) return ''; // No issues, render nothing
+    if (issues.length === 0) return ''; 
 
     return `
       <div style="background: var(--error-color, #ffcccc); padding: 12px; margin-bottom: 8px; border-radius: 4px;">
@@ -308,7 +294,6 @@ class RssNewsCard extends HTMLElement {
     if (!this._hass) return [];
     let all = [];
     
-    // Parse the excluded categories string into an array, lowercase it, and remove extra whitespace
     const excludeString = this._config.exclude_categories || '';
     const excludeList = excludeString.split(',').map(c => c.trim().toLowerCase()).filter(c => c.length > 0);
     
@@ -320,14 +305,11 @@ class RssNewsCard extends HTMLElement {
       if (!Array.isArray(entries)) continue;
       
       entries.forEach(a => {
-        // Python feedparser maps XML <category> to an array of objects called 'tags'
         if (excludeList.length > 0 && Array.isArray(a.tags)) {
-          // Check if any tag object's "term" property matches your exclude list
           const isExcluded = a.tags.some(tag => 
             tag && tag.term && excludeList.includes(tag.term.trim().toLowerCase())
           );
-          
-          if (isExcluded) return; // Skip pushing this article
+          if (isExcluded) return; 
         }
 
         all.push({ 
@@ -338,10 +320,7 @@ class RssNewsCard extends HTMLElement {
       });
     }
 
-    // Sort newest-first using the dedicated parser that handles feedparser's
-    // "Sun, May 24 12:39 PM" format (no year, no timezone).
     all.sort((a, b) => parsePublishedDate(b.published) - parsePublishedDate(a.published));
-
     return all.slice(0, this._config.max_articles);
   }
 
@@ -349,16 +328,32 @@ class RssNewsCard extends HTMLElement {
     try {
       const ts = parsePublishedDate(dateStr);
       if (!ts) return dateStr;
-      return new Date(ts).toLocaleString(this._getDateLocale(), {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit'
-      });
+      
+      const dateObj = new Date(ts);
+      // Fetch user's precise language and display preferences from Home Assistant's locale object 
+      const userLangLocale = this._hass?.locale?.language || this._getDateLocale();
+      
+      const options = {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      };
+
+      // Apply the user's 12/24-hour time formatting settings natively to the date formatter
+      if (this._hass?.locale?.time_format) {
+        if (this._hass.locale.time_format === '12') options.hour12 = true;
+        if (this._hass.locale.time_format === '24') options.hour12 = false;
+      }
+
+      return new Intl.DateTimeFormat(userLangLocale, options).format(dateObj);
     } catch { return dateStr; }
   }
 
   _getVisited() {
-    if (!window._rssNewsCardVisited) window._rssNewsCardVisited = new Set();
-    return window._rssNewsCardVisited;
+    if (!window._feedparserRssNewsCardVisited) window._feedparserRssNewsCardVisited = new Set();
+    return window._feedparserRssNewsCardVisited;
   }
 
   _markVisited(url) {
@@ -375,16 +370,15 @@ class RssNewsCard extends HTMLElement {
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
     
     return articles.map(a => {
-      // feedparser exposes the article body as 'summary', not 'description'
       const desc = a.summary;
       const pubDate = a.published;
       
       return `
-      <div class="rss-article-row" data-rss-url="${a.link}"
+      <div class="feedparser-rss-article-row" data-rss-url="${a.link}"
         style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--divider-color);cursor:pointer;-webkit-tap-highlight-color:transparent;">
         ${a.image && a.image.trim() !== '' ? `<img src="${a.image}" style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'"/>` : ''}
         <div style="flex:1;min-width:0;text-align:left;">
-          <div class="rss-atitle" style="font-size:${title_font_size}px;font-weight:600;line-height:1.4;color:${this._isVisited(a.link) ? 'var(--disabled-text-color)' : (article_title_color || 'var(--primary-text-color)')};white-space:normal;word-break:break-word;margin-bottom:4px;">${a.title}</div>
+          <div class="feedparser-rss-atitle" style="font-size:${title_font_size}px;font-weight:600;line-height:1.4;color:${this._isVisited(a.link) ? 'var(--disabled-text-color)' : (article_title_color || 'var(--primary-text-color)')};white-space:normal;word-break:break-word;margin-bottom:4px;">${a.title}</div>
           ${(show_source || show_date) ? `
             <div style="font-size:11px;color:var(--secondary-text-color);margin-bottom:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               ${show_source ? `<span style="font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:${a._sourceColor};">${a._sourceName}</span>` : ''}
@@ -417,14 +411,14 @@ class RssNewsCard extends HTMLElement {
     this.innerHTML = `
       <ha-card>
         <style>
-          .rss-inner{padding:12px 16px;}
-          .rss-title{font-size:24px;font-weight:400;margin-bottom:8px;}
-          .rss-scroll{overflow-y:scroll;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin;scrollbar-color:var(--divider-color) transparent;}
+          .feedparser-rss-inner{padding:12px 16px;}
+          .feedparser-rss-title{font-size:24px;font-weight:400;margin-bottom:8px;}
+          .feedparser-rss-scroll{overflow-y:scroll;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin;scrollbar-color:var(--divider-color) transparent;}
         </style>
-        <div class="rss-inner">
-          <div class="rss-title-el"></div>
-          <div class="rss-diag"></div>
-          <div class="rss-scroll"><div class="rss-articles"></div></div>
+        <div class="feedparser-rss-inner">
+          <div class="feedparser-rss-title-el"></div>
+          <div class="feedparser-rss-diag"></div>
+          <div class="feedparser-rss-scroll"><div class="feedparser-rss-articles"></div></div>
         </div>
       </ha-card>`;
     this._initialized = true;
@@ -434,27 +428,27 @@ class RssNewsCard extends HTMLElement {
     if (!this._initialized) this._render();
     const { title, card_height, card_title_color } = this._config;
 
-    const titleEl = this.querySelector('.rss-title-el');
+    const titleEl = this.querySelector('.feedparser-rss-title-el');
     if (titleEl) {
-      titleEl.className = title ? 'rss-title-el rss-title' : 'rss-title-el';
+      titleEl.className = title ? 'feedparser-rss-title-el feedparser-rss-title' : 'feedparser-rss-title-el';
       titleEl.style.color = card_title_color || 'var(--primary-text-color)';
       titleEl.textContent = title || '';
     }
 
-    const scrollEl = this.querySelector('.rss-scroll');
+    const scrollEl = this.querySelector('.feedparser-rss-scroll');
     if (scrollEl) scrollEl.style.height = (card_height || 400) + 'px';
 
-    const diagEl = this.querySelector('.rss-diag');
-    const artEl = this.querySelector('.rss-articles');
+    const diagEl = this.querySelector('.feedparser-rss-diag');
+    const artEl = this.querySelector('.feedparser-rss-articles');
     if (diagEl) diagEl.innerHTML = issues.length > 0 ? this._renderDiagnostics(issues) : '';
     if (artEl) {
       artEl.innerHTML = this._buildArticlesHtml(articles);
-      artEl.querySelectorAll('.rss-article-row').forEach(row => {
+      artEl.querySelectorAll('.feedparser-rss-article-row').forEach(row => {
         row.addEventListener('click', () => {
           const url = row.dataset.rssUrl;
           if (!url) return;
           this._markVisited(url);
-          const titleEl = row.querySelector('.rss-atitle');
+          const titleEl = row.querySelector('.feedparser-rss-atitle');
           if (titleEl) titleEl.style.color = 'var(--disabled-text-color)';
           this._handleLinkClick(url);
         });
@@ -466,7 +460,7 @@ class RssNewsCard extends HTMLElement {
 }
 
 // ─── Editor ───────────────────────────────────────────────────────────────────
-class RssNewsCardEditor extends HTMLElement {
+class FeedparserRssNewsCardEditor extends HTMLElement {
   constructor() {
     super();
     this._config = {};
@@ -508,29 +502,29 @@ class RssNewsCardEditor extends HTMLElement {
 
     this.innerHTML = `
       <style>
-        .rss-ed{padding:12px;}
-        .rss-ed label{display:block;font-size:12px;color:var(--secondary-text-color);margin:10px 0 4px;}
-        .rss-ed input[type=text],.rss-ed input[type=number]{width:100%;padding:4px 8px;box-sizing:border-box;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color);}
-        .rss-src-row{display:flex;gap:8px;align-items:center;margin-bottom:6px;}
-        .rss-src-row input{width:auto!important;}
-        .rss-add{margin-top:6px;padding:4px 12px;cursor:pointer;background:var(--primary-color);color:white;border:none;border-radius:4px;}
-        .rss-del{padding:2px 8px;cursor:pointer;border:1px solid var(--divider-color);border-radius:4px;background:transparent;color:var(--primary-text-color);}
-        .rss-toggle-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--divider-color);}
-        .rss-toggle-row label{margin:0;font-size:13px;color:var(--primary-text-color);}
-        .rss-toggle{position:relative;width:36px;height:20px;flex-shrink:0;}
-        .rss-toggle input{opacity:0;width:0;height:0;}
-        .rss-slider{position:absolute;cursor:pointer;inset:0;background:var(--disabled-color,#ccc);border-radius:20px;transition:.2s;}
-        .rss-slider:before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.2s;}
-        input:checked + .rss-slider{background:var(--primary-color);}
-        input:checked + .rss-slider:before{transform:translateX(16px);}
+        .feedparser-rss-ed{padding:12px;}
+        .feedparser-rss-ed label{display:block;font-size:12px;color:var(--secondary-text-color);margin:10px 0 4px;}
+        .feedparser-rss-ed input[type=text],.feedparser-rss-ed input[type=number]{width:100%;padding:4px 8px;box-sizing:border-box;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color);}
+        .feedparser-rss-src-row{display:flex;gap:8px;align-items:center;margin-bottom:6px;}
+        .feedparser-rss-src-row input{width:auto!important;}
+        .feedparser-rss-add{margin-top:6px;padding:4px 12px;cursor:pointer;background:var(--primary-color);color:white;border:none;border-radius:4px;}
+        .feedparser-rss-del{padding:2px 8px;cursor:pointer;border:1px solid var(--divider-color);border-radius:4px;background:transparent;color:var(--primary-text-color);}
+        .feedparser-rss-toggle-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--divider-color);}
+        .feedparser-rss-toggle-row label{margin:0;font-size:13px;color:var(--primary-text-color);}
+        .feedparser-rss-toggle{position:relative;width:36px;height:20px;flex-shrink:0;}
+        .feedparser-rss-toggle input{opacity:0;width:0;height:0;}
+        .feedparser-rss-slider{position:absolute;cursor:pointer;inset:0;background:var(--disabled-color,#ccc);border-radius:20px;transition:.2s;}
+        .feedparser-rss-slider:before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.2s;}
+        input:checked + .feedparser-rss-slider{background:var(--primary-color);}
+        input:checked + .feedparser-rss-slider:before{transform:translateX(16px);}
       </style>
-      <div class="rss-ed">
+      <div class="feedparser-rss-ed">
         <label>${t.ed.card_title}</label>
         <input type="text" id="ed-title" value="${c.title || ''}"/>
 
         <label>${t.ed.sources}</label>
         <div id="ed-sources"></div>
-        <button class="rss-add" id="ed-add">${t.ed.add_source}</button>
+        <button class="feedparser-rss-add" id="ed-add">${t.ed.add_source}</button>
 
         <label>${t.ed.exclude_categories}</label>
         <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports" value="${c.exclude_categories || ''}"/>
@@ -581,25 +575,25 @@ class RssNewsCardEditor extends HTMLElement {
         </div>
 
         <div style="margin-top:12px;">
-          <div class="rss-toggle-row">
+          <div class="feedparser-rss-toggle-row">
             <label for="tog-source">${t.ed.show_source}</label>
-            <label class="rss-toggle">
+            <label class="feedparser-rss-toggle">
               <input type="checkbox" id="tog-source" ${c.show_source !== false ? 'checked' : ''}/>
-              <span class="rss-slider"></span>
+              <span class="feedparser-rss-slider"></span>
             </label>
           </div>
-          <div class="rss-toggle-row">
+          <div class="feedparser-rss-toggle-row">
             <label for="tog-date">${t.ed.show_date}</label>
-            <label class="rss-toggle">
+            <label class="feedparser-rss-toggle">
               <input type="checkbox" id="tog-date" ${c.show_date !== false ? 'checked' : ''}/>
-              <span class="rss-slider"></span>
+              <span class="feedparser-rss-slider"></span>
             </label>
           </div>
-          <div class="rss-toggle-row">
+          <div class="feedparser-rss-toggle-row">
             <label for="tog-desc">${t.ed.show_desc}</label>
-            <label class="rss-toggle">
+            <label class="feedparser-rss-toggle">
               <input type="checkbox" id="tog-desc" ${c.show_description !== false ? 'checked' : ''}/>
-              <span class="rss-slider"></span>
+              <span class="feedparser-rss-slider"></span>
             </label>
           </div>
         </div>
@@ -611,7 +605,7 @@ class RssNewsCardEditor extends HTMLElement {
   }
 
   _syncColorPreviews() {
-    const card = this.closest('ha-card') || document.querySelector('rss-news-card');
+    const card = this.closest('ha-card') || document.querySelector('feedparser-rss-news-card');
     const syncPreview = (previewId, configVal, cssVar) => {
       const preview = this.querySelector(previewId);
       if (!preview) return;
@@ -643,32 +637,32 @@ class RssNewsCardEditor extends HTMLElement {
     if (!container) return;
     const sources = this._config.sources || [];
     container.innerHTML = sources.map((s, i) => `
-      <div class="rss-src-row" data-idx="${i}">
+      <div class="feedparser-rss-src-row" data-idx="${i}">
         <input type="text" style="flex:1;min-width:0;" placeholder="sensor.feedparser_news" data-field="entity" value="${s.entity || ''}"/>
         <input type="text" style="width:80px;flex-shrink:0;" placeholder="Name" data-field="name" value="${s.name || ''}"/>
         <label style="position:relative;width:32px;height:28px;flex-shrink:0;cursor:pointer;border-radius:4px;overflow:hidden;border:1px solid var(--divider-color);">
-          <div style="position:absolute;inset:0;background:${s.color || '#0077cc'};pointer-events:none;" class="rss-color-preview-${i}"></div>
+          <div style="position:absolute;inset:0;background:${s.color || '#0077cc'};pointer-events:none;" class="feedparser-rss-color-preview-${i}"></div>
           <input type="color" data-field="color" value="${s.color || '#0077cc'}" style="position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;"/>
         </label>
-        <button class="rss-del" data-idx="${i}">✕</button>
+        <button class="feedparser-rss-del" data-idx="${i}">✕</button>
       </div>`).join('');
 
     container.querySelectorAll('input').forEach(input => {
       input.addEventListener('input', () => {
-        const row = input.closest('.rss-src-row');
+        const row = input.closest('.feedparser-rss-src-row');
         const idx = parseInt(row.dataset.idx);
         const field = input.dataset.field;
         const sources = [...(this._config.sources || [])];
         sources[idx] = { ...sources[idx], [field]: input.value };
         this._upd('sources', sources);
         if (field === 'color') {
-          const preview = row.querySelector('.rss-color-preview-' + idx);
+          const preview = row.querySelector('.feedparser-rss-color-preview-' + idx);
           if (preview) preview.style.background = input.value;
         }
       });
     });
 
-    container.querySelectorAll('.rss-del').forEach(btn => {
+    container.querySelectorAll('.feedparser-rss-del').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.idx);
         const sources = (this._config.sources || []).filter((_, i) => i !== idx);
@@ -768,13 +762,13 @@ class RssNewsCardEditor extends HTMLElement {
   }
 }
 
-customElements.define('rss-news-card', RssNewsCard);
-customElements.define('rss-news-card-editor', RssNewsCardEditor);
+customElements.define('feedparser-rss-news-card', FeedparserRssNewsCard);
+customElements.define('feedparser-rss-news-card-editor', FeedparserRssNewsCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'rss-news-card',
-  name: 'RSS News Card',
+  type: 'feedparser-rss-news-card',
+  name: 'Feedparser RSS News Card',
   description: 'Scrollable RSS news card specifically mapped for the feedparser integration.',
   preview: true,
 });
