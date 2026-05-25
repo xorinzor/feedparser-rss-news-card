@@ -4,19 +4,19 @@
 ![HA](https://img.shields.io/badge/Home%20Assistant-2026.5+-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-My fork of [https://github.com/suxlala/rss-news-card](https://github.com/suxlala/rss-news-card), **credits go to suxlala for making this**
+My fork of [https://github.com/suxlala/rss-news-card](https://github.com/suxlala/rss-news-card), credits go to **suxlala** for originally making this card.
 
 A RSS newsfeed reader card specifically for use with FeedParser sensors. Works with multiple feeds, has a visual editor and allows filtering unwanted news tags / categories.
 
-![Overview](https://github.com/suxlala/rss-news-card/blob/main/cardoverview.png)
+![Overview](https://github.com/xorinzor/feedparser-rss-news-card/blob/main/cardoverview.png)
 
 ## Features
 
-* Multiple RSS sources using FeedParser sensors in a single card, sorted by datetime
-* Filter out unwanted news items by tags directly from the UI
-* Automatic language & date format detection from Home Assistant settings
-* Visual editor with color picker, toggle switches, and font size controls
-* Community localization support (English, Hungarian, German included)
+- Multiple RSS sources using FeedParser sensors in a single card, sorted by datetime
+- Filter out unwanted news items by tags directly from the UI
+- Automatic language & date format detection from Home Assistant settings
+- Visual editor with color picker, toggle switches, and font size controls
+- Community localization support (English, Hungarian, German included)
 - Flexible layout
 
 ## Installation (using HACS)
