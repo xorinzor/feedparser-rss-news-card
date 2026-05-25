@@ -19,6 +19,10 @@ A RSS newsfeed reader card specifically for use with FeedParser sensors. Works w
 - Community localization support (English, Hungarian, German included)
 - Flexible layout
 
+## Requirements
+
+- You will need to have [FeedParser](https://github.com/custom-components/feedparser) installed
+
 ## Installation (using HACS)
 
 [![Open HACS Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=xorinzor&repository=feedparser-rss-news-card&category=plugin)
