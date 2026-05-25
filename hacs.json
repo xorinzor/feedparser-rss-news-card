@@ -1,7 +1,7 @@
 {
-  "name": "RSS News Card",
+  "name": "FeedParser RSS News Card",
   "content_in_root": true,
-  "filename": "rss-news-card.js",
+  "filename": "feedparser-rss-news-card.js",
   "homeassistant": "2026.5.4",
   "render_readme": true
 }
