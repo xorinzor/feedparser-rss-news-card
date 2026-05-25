@@ -26,6 +26,8 @@ const RSS_LOCALES = {
       show_source:       'Show source name',
       show_date:         'Show date',
       show_desc:         'Show description',
+      show_images:       'Show images',
+      keep_image_space:  'Keep space if image missing',
       title_size:        'Article title font size (px)',
       desc_size:         'Description font size (px)',
       color_hint:        'Leave empty for theme default',
@@ -58,6 +60,8 @@ const RSS_LOCALES = {
       show_source:         'Forrás neve látható',
       show_date:           'Dátum látható',
       show_desc:           'Leírás látható',
+      show_images:         'Képek megjelenítése',
+      keep_image_space:    'Hely megtartása hiányzó képnél',
       title_size:          'Cím betűmérete (px)',
       desc_size:           'Leírás betűmérete (px)',
       color_hint:          'Üresen hagyva a téma alapszínét használja',
@@ -90,6 +94,8 @@ const RSS_LOCALES = {
       show_source:         'Quellenname anzeigen',
       show_date:           'Datum anzeigen',
       show_desc:           'Beschreibung anzeigen',
+      show_images:         'Bilder anzeigen',
+      keep_image_space:    'Platz freihalten wenn Bild fehlt',
       title_size:          'Schriftgröße Artikeltitel (px)',
       desc_size:           'Schriftgröße Beschreibung (px)',
       color_hint:          'Leer lassen für Themenstandardfarbe',
@@ -186,6 +192,8 @@ class FeedparserRssNewsCard extends HTMLElement {
       show_description: true,
       show_source: true,
       show_date: true,
+      show_images: true,
+      keep_image_space: false,
       image_width: 100,
       image_height: 70,
       title_font_size: 15,
@@ -209,6 +217,8 @@ class FeedparserRssNewsCard extends HTMLElement {
       show_description: config.show_description !== false,
       show_source:      config.show_source !== false,
       show_date:        config.show_date !== false,
+      show_images:      config.show_images !== false,
+      keep_image_space: config.keep_image_space === true,
       image_width:      config.image_width || 100,
       image_height:     config.image_height || 70,
       title_font_size:  config.title_font_size || 15,
@@ -330,7 +340,6 @@ class FeedparserRssNewsCard extends HTMLElement {
       if (!ts) return dateStr;
       
       const dateObj = new Date(ts);
-      // Fetch user's precise language and display preferences from Home Assistant's locale object 
       const userLangLocale = this._hass?.locale?.language || this._getDateLocale();
       
       const options = {
@@ -341,7 +350,6 @@ class FeedparserRssNewsCard extends HTMLElement {
         minute: '2-digit'
       };
 
-      // Apply the user's 12/24-hour time formatting settings natively to the date formatter
       if (this._hass?.locale?.time_format) {
         if (this._hass.locale.time_format === '12') options.hour12 = true;
         if (this._hass.locale.time_format === '24') options.hour12 = false;
@@ -365,18 +373,28 @@ class FeedparserRssNewsCard extends HTMLElement {
   }
 
   _buildArticlesHtml(articles) {
-    const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color } = this._config;
+    const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color, show_images, keep_image_space } = this._config;
     const t = this._t();
     if (articles.length === 0) return `<div style="padding:20px;color:var(--secondary-text-color);text-align:center;">${t.no_articles}</div>`;
     
     return articles.map(a => {
       const desc = a.summary;
       const pubDate = a.published;
+
+      let imageHtml = '';
+      if (show_images) {
+        const hasImage = a.image && a.image.trim() !== '';
+        if (hasImage) {
+          imageHtml = `<img src="${a.image}" style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="${keep_image_space ? "this.style.visibility='hidden'" : "this.style.display='none'"}"/ >`;
+        } else if (keep_image_space) {
+          imageHtml = `<div style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;flex-shrink:0;"></div>`;
+        }
+      }
       
       return `
       <div class="feedparser-rss-article-row" data-rss-url="${a.link}"
         style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--divider-color);cursor:pointer;-webkit-tap-highlight-color:transparent;">
-        ${a.image && a.image.trim() !== '' ? `<img src="${a.image}" style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'"/>` : ''}
+        ${imageHtml}
         <div style="flex:1;min-width:0;text-align:left;">
           <div class="feedparser-rss-atitle" style="font-size:${title_font_size}px;font-weight:600;line-height:1.4;color:${this._isVisited(a.link) ? 'var(--disabled-text-color)' : (article_title_color || 'var(--primary-text-color)')};white-space:normal;word-break:break-word;margin-bottom:4px;">${a.title}</div>
           ${(show_source || show_date) ? `
@@ -596,6 +614,20 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
               <span class="feedparser-rss-slider"></span>
             </label>
           </div>
+          <div class="feedparser-rss-toggle-row">
+            <label for="tog-images">${t.ed.show_images}</label>
+            <label class="feedparser-rss-toggle">
+              <input type="checkbox" id="tog-images" ${c.show_images !== false ? 'checked' : ''}/>
+              <span class="feedparser-rss-slider"></span>
+            </label>
+          </div>
+          <div class="feedparser-rss-toggle-row" id="row-image-space" style="${c.show_images !== false ? '' : 'display:none;'}">
+            <label for="tog-image-space">${t.ed.keep_image_space}</label>
+            <label class="feedparser-rss-toggle">
+              <input type="checkbox" id="tog-image-space" ${c.keep_image_space === true ? 'checked' : ''}/>
+              <span class="feedparser-rss-slider"></span>
+            </label>
+          </div>
         </div>
       </div>`;
 
@@ -724,6 +756,16 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     bindChk('#tog-source', 'show_source');
     bindChk('#tog-date',   'show_date');
     bindChk('#tog-desc',   'show_description');
+    bindChk('#tog-images', 'show_images');
+    bindChk('#tog-image-space', 'keep_image_space');
+
+    const togImages = this.querySelector('#tog-images');
+    const rowImageSpace = this.querySelector('#row-image-space');
+    if (togImages && rowImageSpace) {
+      togImages.addEventListener('change', e => {
+        rowImageSpace.style.display = e.target.checked ? '' : 'none';
+      });
+    }
 
     const addBtn = this.querySelector('#ed-add');
     if (addBtn) {
@@ -754,6 +796,13 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     setChk('#tog-source', c.show_source !== false);
     setChk('#tog-date',   c.show_date !== false);
     setChk('#tog-desc',   c.show_description !== false);
+    setChk('#tog-images', c.show_images !== false);
+    setChk('#tog-image-space', c.keep_image_space === true);
+
+    const rowImageSpace = this.querySelector('#row-image-space');
+    if (rowImageSpace) {
+      rowImageSpace.style.display = c.show_images !== false ? '' : 'none';
+    }
   }
 
   _upd(key, value) {
