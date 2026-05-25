@@ -61,7 +61,7 @@ sensor:
 ### Card config example
 
 ```yaml
-type: custom:rss-news-card
+type: custom:feedparser-rss-news-card
 title: Latest News
 card_height: 400
 max_articles: 20
