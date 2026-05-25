@@ -84,3 +84,11 @@ sources:
     color: "#0077cc"
 
 ```
+
+## Development
+
+To test changes locally, you can use the [File Editor](https://github.com/home-assistant/addons/blob/master/configurator/README.md) app.
+1. Navigate to `homeassistant/www/community/feedparser-rss-news-card/`
+2. Remove the `feedparser-rss-news-card.js.gz` file, if you don't do this, changes you'll be making will not become visible.
+3. Edit the `feedparser-rss-news-card.js` file, apply your changes here.
+4. Save the changes and reload your browser, make sure to empty the cache.
