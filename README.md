@@ -56,7 +56,7 @@ sensor:
       - title
       - link
       - description
-      - image # optional, not shown if not present
+      - image
       - published
       - tags
 
