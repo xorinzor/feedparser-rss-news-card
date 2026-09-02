@@ -167,6 +167,53 @@ function parsePublishedDate(str) {
   return isNaN(native.getTime()) ? 0 : native.getTime();
 }
 
+// ─── Safe rendering helpers ──────────────────────────────────────────────────
+// Feed entries are third-party content and must never reach innerHTML.
+
+const SAFE_URL_PROTOCOLS = new Set(['http:', 'https:']);
+
+/** Returns the URL if it is an absolute http(s) URL, otherwise ''. */
+function sanitizeUrl(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    return SAFE_URL_PROTOCOLS.has(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Converts (possibly HTML) feed text to plain text without executing anything. */
+function feedTextToPlain(value) {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (!/[<&]/.test(str)) return str;
+  try {
+    const doc = new DOMParser().parseFromString(str, 'text/html');
+    doc.querySelectorAll('script, style, template').forEach(n => n.remove());
+    return (doc.body ? doc.body.textContent : '') || '';
+  } catch {
+    return str;
+  }
+}
+
+/** Only allow simple CSS colour values (named, hex, rgb()/hsl(), CSS vars). */
+function sanitizeCssColor(value, fallback) {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim();
+  if (/^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)|var\(--[a-zA-Z0-9-]+\))$/.test(v)) return v;
+  return fallback;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 // ─── Card ─────────────────────────────────────────────────────────────────────
 class FeedparserRssNewsCard extends HTMLElement {
   constructor() {
@@ -279,28 +326,23 @@ class FeedparserRssNewsCard extends HTMLElement {
   }
 
   _renderDiagnostics() {
-    if (!this._hass || !this._config) return '';
-    
-    let issues = [];
+    if (!this._hass || !this._config) return null;
+
+    const issues = [];
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
-      if (!state) {
-        issues.push(`Entity not found: ${source.entity}`);
-      }
+      if (!state) issues.push(`Entity not found: ${source.entity}`);
     }
+    if (issues.length === 0) return null;
 
-    if (issues.length === 0) return ''; 
-
-    return `
-      <div class="diagnostics-panel">
-        <strong>⚠️ Sensor diagnostics</strong>
-        <ul>
-          ${issues.map(issue => `<li>${issue}</li>`).join('')}
-        </ul>
-      </div>
-    `;
+    const panel = el('div', 'diagnostics-panel');
+    panel.appendChild(el('strong', '', '⚠️ Sensor diagnostics'));
+    const ul = document.createElement('ul');
+    issues.forEach(issue => ul.appendChild(el('li', '', issue)));
+    panel.appendChild(ul);
+    return panel;
   }
-  
+
   _getArticles() {
     if (!this._hass) return [];
     let all = [];
@@ -373,40 +415,81 @@ class FeedparserRssNewsCard extends HTMLElement {
     return this._getVisited().has(url);
   }
 
-  _buildArticlesHtml(articles) {
+  _buildArticleNodes(articles) {
     const { show_source, show_date, show_description, image_width, image_height, title_font_size, desc_font_size, article_title_color, desc_color, show_images, keep_image_space } = this._config;
     const t = this._t();
-    if (articles.length === 0) return `<div class="no-articles">${t.no_articles}</div>`;
-    
-    return articles.map(a => {
-      const desc = a.summary;
-      const pubDate = a.published;
+    const frag = document.createDocumentFragment();
+    if (articles.length === 0) {
+      frag.appendChild(el('div', 'no-articles', t.no_articles));
+      return frag;
+    }
 
-      let imageHtml = '';
+    const imgW = parseInt(image_width, 10) || 100;
+    const imgH = parseInt(image_height, 10) || 70;
+    const titleSize = parseInt(title_font_size, 10) || 15;
+    const descSize = parseInt(desc_font_size, 10) || 14;
+    const titleColor = sanitizeCssColor(article_title_color, 'var(--primary-text-color)');
+    const descColor = sanitizeCssColor(desc_color, 'var(--secondary-text-color)');
+
+    articles.forEach(a => {
+      const link = sanitizeUrl(a.link);
+      const title = feedTextToPlain(a.title);
+      const desc = feedTextToPlain(a.summary);
+      const pubDate = typeof a.published === 'string' ? a.published : '';
+
+      const row = el('div', 'article-row');
+      if (link) row.dataset.rssUrl = link;
+
       if (show_images) {
-        const hasImage = a.image && a.image.trim() !== '';
-        if (hasImage) {
-          imageHtml = `<img src="${a.image}" class="article-image" style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;" onerror="${keep_image_space ? "this.style.visibility='hidden'" : "this.style.display='none'"}"/ >`;
+        const image = sanitizeUrl(a.image);
+        if (image) {
+          const img = el('img', 'article-image');
+          img.src = image;
+          img.alt = '';
+          img.referrerPolicy = 'no-referrer';
+          img.style.cssText = `width:${imgW}px;min-width:${imgW}px;height:${imgH}px;`;
+          img.addEventListener('error', () => {
+            if (keep_image_space) img.style.visibility = 'hidden';
+            else img.style.display = 'none';
+          });
+          row.appendChild(img);
         } else if (keep_image_space) {
-          imageHtml = `<div style="width:${image_width}px;min-width:${image_width}px;height:${image_height}px;flex-shrink:0;"></div>`;
+          const placeholder = document.createElement('div');
+          placeholder.style.cssText = `width:${imgW}px;min-width:${imgW}px;height:${imgH}px;flex-shrink:0;`;
+          row.appendChild(placeholder);
         }
       }
-      
-      return `
-      <div class="article-row" data-rss-url="${a.link}">
-        ${imageHtml}
-        <div class="article-content">
-          <div class="article-title" style="font-size:${title_font_size}px;color:${this._isVisited(a.link) ? 'var(--disabled-text-color)' : (article_title_color || 'var(--primary-text-color)')};">${a.title}</div>
-          ${(show_source || show_date) ? `
-            <div class="article-meta">
-              ${show_source ? `<span class="article-source" style="color:${a._sourceColor};">${a._sourceName}</span>` : ''}
-              ${(show_source && show_date) ? `<span class="article-meta-separator">·</span>` : ''}
-              ${show_date && pubDate ? `<span>${this._formatDate(pubDate)}</span>` : ''}
-            </div>` : ''}
-          ${show_description && desc ? `<div class="article-description" style="font-size:${desc_font_size}px;color:${desc_color || 'var(--secondary-text-color)'};">${desc}</div>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+
+      const content = el('div', 'article-content');
+
+      const titleEl = el('div', 'article-title', title);
+      titleEl.style.fontSize = `${titleSize}px`;
+      titleEl.style.color = (link && this._isVisited(link)) ? 'var(--disabled-text-color)' : titleColor;
+      content.appendChild(titleEl);
+
+      if (show_source || show_date) {
+        const meta = el('div', 'article-meta');
+        if (show_source) {
+          const src = el('span', 'article-source', String(a._sourceName ?? ''));
+          src.style.color = sanitizeCssColor(a._sourceColor, 'var(--primary-color)');
+          meta.appendChild(src);
+        }
+        if (show_source && show_date) meta.appendChild(el('span', 'article-meta-separator', '·'));
+        if (show_date && pubDate) meta.appendChild(el('span', '', this._formatDate(pubDate)));
+        content.appendChild(meta);
+      }
+
+      if (show_description && desc) {
+        const descEl = el('div', 'article-description', desc);
+        descEl.style.fontSize = `${descSize}px`;
+        descEl.style.color = descColor;
+        content.appendChild(descEl);
+      }
+
+      row.appendChild(content);
+      frag.appendChild(row);
+    });
+    return frag;
   }
 
   _handleLinkClick(url) {
@@ -460,25 +543,28 @@ class FeedparserRssNewsCard extends HTMLElement {
     const titleEl = this.shadowRoot.querySelector('.card-title');
     if (titleEl) {
       titleEl.style.display = title ? '' : 'none';
-      titleEl.style.color = card_title_color || 'var(--primary-text-color)';
+      titleEl.style.color = sanitizeCssColor(card_title_color, 'var(--primary-text-color)');
       titleEl.textContent = title || '';
     }
 
     const scrollEl = this.shadowRoot.querySelector('.scroll-container');
-    if (scrollEl) scrollEl.style.height = (card_height || 400) + 'px';
+    if (scrollEl) scrollEl.style.height = (parseInt(card_height, 10) || 400) + 'px';
 
     const diagEl = this.shadowRoot.querySelector('.diagnostics');
     const artEl = this.shadowRoot.querySelector('.article-list');
-    if (diagEl) diagEl.innerHTML = issues.length > 0 ? this._renderDiagnostics(issues) : '';
+    if (diagEl) {
+      const panel = issues.length > 0 ? this._renderDiagnostics(issues) : null;
+      diagEl.replaceChildren(...(panel ? [panel] : []));
+    }
     if (artEl) {
-      artEl.innerHTML = this._buildArticlesHtml(articles);
+      artEl.replaceChildren(this._buildArticleNodes(articles));
       artEl.querySelectorAll('.article-row').forEach(row => {
         row.addEventListener('click', () => {
-          const url = row.dataset.rssUrl;
+          const url = sanitizeUrl(row.dataset.rssUrl);
           if (!url) return;
           this._markVisited(url);
-          const titleEl = row.querySelector('.article-title');
-          if (titleEl) titleEl.style.color = 'var(--disabled-text-color)';
+          const rowTitle = row.querySelector('.article-title');
+          if (rowTitle) rowTitle.style.color = 'var(--disabled-text-color)';
           this._handleLinkClick(url);
         });
       });
