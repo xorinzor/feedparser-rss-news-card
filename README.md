@@ -77,7 +77,7 @@ sensor:
 | `title` | string | `''` | Card title. Hidden when empty. |
 | `max_articles` | number | `10` | Maximum number of articles across all sources. |
 | `card_height` | number | `400` | Height of the scrollable article list in px. |
-| `exclude_categories` | string or list | `''` | Tags to hide, as a comma-separated string or a YAML list. Matching ignores case. |
+| `exclude_categories` | list | `[]` | Tags to hide. Matching ignores case. A comma-separated string also works. The visual editor suggests tags found in your feeds. |
 | `show_source` | boolean | `true` | Show the source name. |
 | `show_date` | boolean | `true` | Show the publish date. |
 | `show_description` | boolean | `true` | Show the article summary. |
@@ -109,7 +109,9 @@ image_width: 100
 image_height: 70
 title_font_size: 15
 desc_font_size: 14
-exclude_categories: formule-1, voetbal
+exclude_categories:
+  - formule-1
+  - voetbal
 sources:
   - entity: sensor.rss_nu_nl_feed
     name: NU.nl Algemeen

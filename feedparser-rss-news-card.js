@@ -18,7 +18,8 @@ const RSS_LOCALES = {
       desc_color:        'Description color',
       sources:           'Sources (entity · name · color)',
       add_source:        '+ Add source',
-      exclude_categories: 'Exclude categories (comma-separated)',
+      exclude_categories: 'Exclude categories',
+      exclude_placeholder: 'Add category, press Enter',
       max_articles:      'Max articles',
       card_height:       'Card height (px)',
       img_width:         'Image width (px)',
@@ -52,7 +53,8 @@ const RSS_LOCALES = {
       desc_color:          'Leírás színe',
       sources:             'Források (entitás · név · szín)',
       add_source:          '+ Forrás hozzáadása',
-      exclude_categories:  'Kizárt kategóriák (vesszővel elválasztva)',
+      exclude_categories:  'Kizárt kategóriák',
+      exclude_placeholder: 'Kategória hozzáadása, majd Enter',
       max_articles:        'Max cikkek száma',
       card_height:         'Kártya magassága (px)',
       img_width:           'Kép szélessége (px)',
@@ -86,7 +88,8 @@ const RSS_LOCALES = {
       desc_color:          'Farbe Beschreibung',
       sources:             'Quellen (Entität · Name · Farbe)',
       add_source:          '+ Quelle hinzufügen',
-      exclude_categories:  'Kategorien ausschließen (kommagetrennt)',
+      exclude_categories:  'Kategorien ausschließen',
+      exclude_placeholder: 'Kategorie hinzufügen, Enter drücken',
       max_articles:        'Max. Artikel',
       card_height:         'Kartenhöhe (px)',
       img_width:           'Bildbreite (px)',
@@ -208,6 +211,20 @@ function sanitizeCssColor(value, fallback) {
   return fallback;
 }
 
+/** Normalizes exclude_categories (comma-separated string or list) to unique, trimmed names. */
+function parseCategories(value) {
+  const seen = new Set();
+  return [].concat(value || [])
+    .flatMap(c => String(c).split(','))
+    .map(c => c.trim())
+    .filter(c => {
+      const key = c.toLowerCase();
+      if (!c || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -234,7 +251,7 @@ class FeedparserRssNewsCard extends HTMLElement {
     return {
       title: 'News',
       sources: [{ entity: 'sensor.feedparser_news', name: 'Feedparser Source', color: '#e63946' }],
-      exclude_categories: '',
+      exclude_categories: [],
       max_articles: 10,
       card_height: 400,
       show_description: true,
@@ -344,10 +361,7 @@ class FeedparserRssNewsCard extends HTMLElement {
     if (!this._hass) return [];
     let all = [];
     
-    const excludeList = [].concat(this._config.exclude_categories || [])
-      .flatMap(c => String(c).split(','))
-      .map(c => c.trim().toLowerCase())
-      .filter(c => c.length > 0);
+    const excludeList = parseCategories(this._config.exclude_categories).map(c => c.toLowerCase());
     
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
@@ -600,6 +614,7 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._rendered) this._renderShell();
+    else this._renderCategorySuggestions();
   }
 
   _getLang() {
@@ -627,6 +642,11 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         .btn-add { margin-top: 6px; padding: 4px 12px; cursor: pointer; background: var(--primary-color); color: white; border: none; border-radius: 4px; }
         .btn-delete { padding: 2px 8px; cursor: pointer; border: 1px solid var(--divider-color); border-radius: 4px; background: transparent; color: var(--primary-text-color); }
         .btn-delete:disabled { opacity: 0.4; cursor: default; }
+        .chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+        .chip-list:empty { display: none; }
+        .chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 2px 2px 10px; border-radius: 14px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font-size: 13px; }
+        .chip-remove { border: none; background: transparent; color: var(--secondary-text-color); cursor: pointer; padding: 2px 6px; font-size: 11px; line-height: 1; border-radius: 50%; }
+        .chip-remove:hover { color: var(--error-color); }
         .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
         .toggle-row label { margin: 0; font-size: 13px; color: var(--primary-text-color); }
         .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
@@ -651,7 +671,9 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         <button class="btn-add" id="ed-add">${t.ed.add_source}</button>
 
         <label>${t.ed.exclude_categories}</label>
-        <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports"/>
+        <div class="chip-list" id="ed-exclude-chips"></div>
+        <input type="text" id="ed-exclude-input" list="ed-exclude-suggestions" placeholder="${t.ed.exclude_placeholder}"/>
+        <datalist id="ed-exclude-suggestions"></datalist>
 
         <label>${t.ed.max_articles}</label>
         <input type="number" id="ed-max" min="1" max="50"/>
@@ -820,7 +842,6 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     };
 
     bind('#ed-title',    'title');
-    bind('#ed-exclude-cats', 'exclude_categories');
     bind('#ed-max',      'max_articles',    v => parseInt(v) || 10);
     bind('#ed-height',   'card_height',     v => parseInt(v) || 400);
     bind('#ed-imgw',     'image_width',     v => parseInt(v) || 100);
@@ -868,6 +889,28 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
       });
     }
 
+    const categoryInput = this.shadowRoot.querySelector('#ed-exclude-input');
+    if (categoryInput) {
+      const commitCategory = () => {
+        if (categoryInput.value.trim()) this._setCategories([...this._categories(), categoryInput.value]);
+        categoryInput.value = '';
+      };
+      categoryInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          e.stopPropagation();
+          commitCategory();
+        } else if (e.key === 'Backspace' && !categoryInput.value) {
+          this._setCategories(this._categories().slice(0, -1));
+        }
+      });
+      // Picking a suggestion fires an input event without a typing inputType (Chrome: insertReplacementText, Firefox: none).
+      categoryInput.addEventListener('input', e => {
+        if (!e.inputType || e.inputType === 'insertReplacementText') commitCategory();
+      });
+      categoryInput.addEventListener('change', commitCategory);
+    }
+
     const addBtn = this.shadowRoot.querySelector('#ed-add');
     if (addBtn) {
       addBtn.addEventListener('click', () => {
@@ -884,7 +927,7 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     const setChk = (id, val) => { const el = this.shadowRoot.querySelector(id); if (el) el.checked = !!val; };
     
     set('#ed-title',     c.title);
-    set('#ed-exclude-cats', c.exclude_categories);
+    this._renderCategories();
     set('#ed-max',       c.max_articles);
     set('#ed-height',    c.card_height);
     set('#ed-imgw',      c.image_width);
@@ -907,6 +950,55 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     if (rowImageSpace) {
       rowImageSpace.style.display = c.show_images !== false ? '' : 'none';
     }
+  }
+
+  _categories() {
+    return parseCategories(this._config.exclude_categories);
+  }
+
+  _setCategories(categories) {
+    this._upd('exclude_categories', parseCategories(categories));
+    this._renderCategories();
+  }
+
+  _renderCategories() {
+    const container = this.shadowRoot.querySelector('#ed-exclude-chips');
+    if (!container) return;
+    const categories = this._categories();
+    container.replaceChildren(...categories.map(category => {
+      const chip = el('span', 'chip', category);
+      const remove = el('button', 'chip-remove', '✕');
+      remove.type = 'button';
+      remove.addEventListener('click', () => this._setCategories(categories.filter(c => c !== category)));
+      chip.appendChild(remove);
+      return chip;
+    }));
+    this._renderCategorySuggestions();
+  }
+
+  /** Suggests tag terms found in the configured sources that are not excluded yet. */
+  _renderCategorySuggestions() {
+    const datalist = this.shadowRoot.querySelector('#ed-exclude-suggestions');
+    if (!datalist || !this._hass) return;
+    const excluded = new Set(this._categories().map(c => c.toLowerCase()));
+    const terms = new Map();
+    for (const source of this._config.sources || []) {
+      const entries = this._hass.states[source.entity]?.attributes?.entries;
+      if (!Array.isArray(entries)) continue;
+      entries.forEach(a => (Array.isArray(a.tags) ? a.tags : []).forEach(tag => {
+        const term = typeof tag?.term === 'string' ? tag.term.trim() : '';
+        if (term && !excluded.has(term.toLowerCase())) terms.set(term.toLowerCase(), term);
+      }));
+    }
+    const suggestions = [...terms.values()].sort((a, b) => a.localeCompare(b));
+    const key = suggestions.join('\n');
+    if (key === this._suggestionKey) return;
+    this._suggestionKey = key;
+    datalist.replaceChildren(...suggestions.map(term => {
+      const option = document.createElement('option');
+      option.value = term;
+      return option;
+    }));
   }
 
   _upd(key, value) {
