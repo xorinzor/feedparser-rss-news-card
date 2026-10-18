@@ -10,7 +10,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Entity has no "entries" attribute (check feedparser configuration).' },
       empty:                 { icon: '📭', text: 'Entity is reachable but contains no articles yet.' },
     },
-    cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
+    cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
       card_title:        'Card title',
       card_title_color:  'Card title color',
@@ -44,7 +44,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).' },
       empty:                 { icon: '📭', text: 'Az entitás elérhető, de még nincs benne cikk.' },
     },
-    cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
+    cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
       card_title:          'Kártya cime',
       card_title_color:    'Kártya cím színe',
@@ -78,7 +78,7 @@ const RSS_LOCALES = {
       no_entries_attribute:  { icon: '🗂️', text: 'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).' },
       empty:                 { icon: '📭', text: 'Entität ist erreichbar, enthält aber noch keine Artikel.' },
     },
-    cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published',
+    cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
       card_title:          'Kartentitel',
       card_title_color:    'Farbe Kartentitel',
@@ -131,7 +131,8 @@ const MONTH_MAP = {
 function parsePublishedDate(str) {
   if (!str) return 0;
 
-  const cleaned = str.replace(/^[A-Za-z]+,?\s+/, '').trim();
+  // Strip only a weekday prefix; a generic word match would also strip a leading month name.
+  const cleaned = str.replace(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+/i, '').trim();
   const m12 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   const m24 = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{2}):(\d{2})$/);
   const dm12 = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
@@ -221,7 +222,6 @@ class FeedparserRssNewsCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
-    this._articles = [];
     this._lastStateKey = '';
     this._initialized = false;
   }
@@ -276,10 +276,9 @@ class FeedparserRssNewsCard extends HTMLElement {
       desc_color:       config.desc_color || '',
     };
     this._initialized = false;
+    this._lastStateKey = '';
     this._render();
-    if (this._hass) {
-      this._updateContent(this._articles || [], JSON.parse(this._lastIssuesJson || '[]'));
-    }
+    if (this._hass) this.hass = this._hass;
   }
 
   set hass(hass) {
@@ -290,11 +289,7 @@ class FeedparserRssNewsCard extends HTMLElement {
     }).join('|');
     if (stateKey === this._lastStateKey && this._initialized) return;
     this._lastStateKey = stateKey;
-    const newArticles = this._getArticles();
-    const newIssues = this._validateSources();
-    this._articles = newArticles;
-    this._lastIssuesJson = JSON.stringify(newIssues);
-    this._updateContent(newArticles, newIssues);
+    this._updateContent(this._getArticles(), this._validateSources());
   }
 
   _getLang() {
@@ -325,21 +320,23 @@ class FeedparserRssNewsCard extends HTMLElement {
     return issues;
   }
 
-  _renderDiagnostics() {
-    if (!this._hass || !this._config) return null;
-
-    const issues = [];
-    for (const source of this._config.sources) {
-      const state = this._hass.states[source.entity];
-      if (!state) issues.push(`Entity not found: ${source.entity}`);
-    }
-    if (issues.length === 0) return null;
-
+  _renderDiagnostics(issues) {
+    const t = this._t();
     const panel = el('div', 'diagnostics-panel');
-    panel.appendChild(el('strong', '', '⚠️ Sensor diagnostics'));
+    panel.appendChild(el('strong', '', t.diag_title));
     const ul = document.createElement('ul');
-    issues.forEach(issue => ul.appendChild(el('li', '', issue)));
+    issues.forEach(issue => {
+      const problem = t.problems[issue.problem];
+      const label = issue.name === issue.entity ? issue.entity : `${issue.name} (${issue.entity})`;
+      ul.appendChild(el('li', '', `${problem.icon} ${label}: ${problem.text}`));
+    });
     panel.appendChild(ul);
+    // Locale strings are trusted constants with inline markup; entity names above stay textContent.
+    const footer = el('div', 'diagnostics-footer');
+    footer.innerHTML = t.diag_footer;
+    const hint = el('div', 'diagnostics-footer');
+    hint.innerHTML = t.cmd_hint;
+    panel.append(footer, hint);
     return panel;
   }
 
@@ -347,8 +344,10 @@ class FeedparserRssNewsCard extends HTMLElement {
     if (!this._hass) return [];
     let all = [];
     
-    const excludeString = this._config.exclude_categories || '';
-    const excludeList = excludeString.split(',').map(c => c.trim().toLowerCase()).filter(c => c.length > 0);
+    const excludeList = [].concat(this._config.exclude_categories || [])
+      .flatMap(c => String(c).split(','))
+      .map(c => c.trim().toLowerCase())
+      .filter(c => c.length > 0);
     
     for (const source of this._config.sources) {
       const state = this._hass.states[source.entity];
@@ -504,7 +503,7 @@ class FeedparserRssNewsCard extends HTMLElement {
     window.open(
       url, 'rss_article',
       `width=${w},height=${h},left=${left},top=${top},` +
-      'toolbar=no,menubar=no,scrollbars=yes,resizable=yes'
+      'toolbar=no,menubar=no,scrollbars=yes,resizable=yes,noopener,noreferrer'
     );
   }
 
@@ -525,6 +524,7 @@ class FeedparserRssNewsCard extends HTMLElement {
         .article-image { object-fit: cover; border-radius: 6px; flex-shrink: 0; }
         .diagnostics-panel { background: var(--error-color, #ffcccc); padding: 12px; margin-bottom: 8px; border-radius: 4px; }
         .diagnostics-panel ul { margin: 8px 0; padding-left: 20px; }
+        .diagnostics-footer { font-size: 12px; margin-top: 6px; }
       </style>
       <ha-card>
         <div class="card-body">
@@ -613,7 +613,6 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
 
   _renderShell() {
     this._rendered = true;
-    const c = this._config || {};
     const t = this._t();
 
     this.shadowRoot.innerHTML = `
@@ -627,6 +626,7 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         .source-name-input { width: 80px; flex-shrink: 0; }
         .btn-add { margin-top: 6px; padding: 4px 12px; cursor: pointer; background: var(--primary-color); color: white; border: none; border-radius: 4px; }
         .btn-delete { padding: 2px 8px; cursor: pointer; border: 1px solid var(--divider-color); border-radius: 4px; background: transparent; color: var(--primary-text-color); }
+        .btn-delete:disabled { opacity: 0.4; cursor: default; }
         .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
         .toggle-row label { margin: 0; font-size: 13px; color: var(--primary-text-color); }
         .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
@@ -644,121 +644,114 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
       </style>
       <div class="editor">
         <label>${t.ed.card_title}</label>
-        <input type="text" id="ed-title" value="${c.title || ''}"/>
+        <input type="text" id="ed-title"/>
 
         <label>${t.ed.sources}</label>
         <div id="ed-sources"></div>
         <button class="btn-add" id="ed-add">${t.ed.add_source}</button>
 
         <label>${t.ed.exclude_categories}</label>
-        <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports" value="${c.exclude_categories || ''}"/>
+        <input type="text" id="ed-exclude-cats" placeholder="e.g. politics, sports"/>
 
         <label>${t.ed.max_articles}</label>
-        <input type="number" id="ed-max" min="1" max="50" value="${c.max_articles || 10}"/>
+        <input type="number" id="ed-max" min="1" max="50"/>
 
         <label>${t.ed.card_height}</label>
-        <input type="number" id="ed-height" min="100" max="2000" value="${c.card_height || 400}"/>
+        <input type="number" id="ed-height" min="100" max="2000"/>
 
         <label>${t.ed.img_width}</label>
-        <input type="number" id="ed-imgw" min="50" max="300" value="${c.image_width || 100}"/>
+        <input type="number" id="ed-imgw" min="50" max="300"/>
 
         <label>${t.ed.img_height}</label>
-        <input type="number" id="ed-imgh" min="50" max="300" value="${c.image_height || 70}"/>
+        <input type="number" id="ed-imgh" min="50" max="300"/>
 
         <label>${t.ed.title_size}</label>
-        <input type="number" id="ed-titlesize" min="10" max="30" value="${c.title_font_size || 15}"/>
+        <input type="number" id="ed-titlesize" min="10" max="30"/>
 
         <label>${t.ed.desc_size}</label>
-        <input type="number" id="ed-descsize" min="10" max="24" value="${c.desc_font_size || 14}"/>
+        <input type="number" id="ed-descsize" min="10" max="24"/>
 
         <label>${t.ed.card_title_color} <small class="color-hint">(${t.ed.color_hint})</small></label>
         <div class="color-field">
           <label class="color-swatch-label">
-            <div id="prev-card-title-color" class="color-swatch" style="background:${c.card_title_color || 'transparent'};${!c.card_title_color ? 'background-image:repeating-linear-gradient(45deg,#ccc 0,#ccc 2px,transparent 0,transparent 50%);background-size:6px 6px;' : ''}"></div>
-            <input type="color" id="ed-card-title-color" class="color-picker-input" value="${c.card_title_color || '#ffffff'}"/>
+            <div id="prev-card-title-color" class="color-swatch"></div>
+            <input type="color" id="ed-card-title-color" class="color-picker-input"/>
           </label>
-          <input type="text" id="ed-card-title-color-text" placeholder="e.g. #ff0000 or empty" value="${c.card_title_color || ''}"/>
+          <input type="text" id="ed-card-title-color-text" placeholder="e.g. #ff0000 or empty"/>
         </div>
 
         <label>${t.ed.article_title_color} <small class="color-hint">(${t.ed.color_hint})</small></label>
         <div class="color-field">
           <label class="color-swatch-label">
-            <div id="prev-article-title-color" class="color-swatch" style="background:${c.article_title_color || 'transparent'};${!c.article_title_color ? 'background-image:repeating-linear-gradient(45deg,#ccc 0,#ccc 2px,transparent 0,transparent 50%);background-size:6px 6px;' : ''}"></div>
-            <input type="color" id="ed-article-title-color" class="color-picker-input" value="${c.article_title_color || '#ffffff'}"/>
+            <div id="prev-article-title-color" class="color-swatch"></div>
+            <input type="color" id="ed-article-title-color" class="color-picker-input"/>
           </label>
-          <input type="text" id="ed-article-title-color-text" placeholder="e.g. #ff0000 or empty" value="${c.article_title_color || ''}"/>
+          <input type="text" id="ed-article-title-color-text" placeholder="e.g. #ff0000 or empty"/>
         </div>
 
         <label>${t.ed.desc_color} <small class="color-hint">(${t.ed.color_hint})</small></label>
         <div class="color-field">
           <label class="color-swatch-label">
-            <div id="prev-desc-color" class="color-swatch" style="background:${c.desc_color || 'transparent'};${!c.desc_color ? 'background-image:repeating-linear-gradient(45deg,#ccc 0,#ccc 2px,transparent 0,transparent 50%);background-size:6px 6px;' : ''}"></div>
-            <input type="color" id="ed-desc-color" class="color-picker-input" value="${c.desc_color || '#ffffff'}"/>
+            <div id="prev-desc-color" class="color-swatch"></div>
+            <input type="color" id="ed-desc-color" class="color-picker-input"/>
           </label>
-          <input type="text" id="ed-desc-color-text" placeholder="e.g. #ff0000 or empty" value="${c.desc_color || ''}"/>
+          <input type="text" id="ed-desc-color-text" placeholder="e.g. #ff0000 or empty"/>
         </div>
 
         <div class="toggle-section">
           <div class="toggle-row">
             <label for="tog-source">${t.ed.show_source}</label>
             <label class="toggle">
-              <input type="checkbox" id="tog-source" ${c.show_source !== false ? 'checked' : ''}/>
+              <input type="checkbox" id="tog-source"/>
               <span class="slider"></span>
             </label>
           </div>
           <div class="toggle-row">
             <label for="tog-date">${t.ed.show_date}</label>
             <label class="toggle">
-              <input type="checkbox" id="tog-date" ${c.show_date !== false ? 'checked' : ''}/>
+              <input type="checkbox" id="tog-date"/>
               <span class="slider"></span>
             </label>
           </div>
           <div class="toggle-row">
             <label for="tog-desc">${t.ed.show_desc}</label>
             <label class="toggle">
-              <input type="checkbox" id="tog-desc" ${c.show_description !== false ? 'checked' : ''}/>
+              <input type="checkbox" id="tog-desc"/>
               <span class="slider"></span>
             </label>
           </div>
           <div class="toggle-row">
             <label for="tog-images">${t.ed.show_images}</label>
             <label class="toggle">
-              <input type="checkbox" id="tog-images" ${c.show_images !== false ? 'checked' : ''}/>
+              <input type="checkbox" id="tog-images"/>
               <span class="slider"></span>
             </label>
           </div>
-          <div class="toggle-row" id="row-image-space" style="${c.show_images !== false ? '' : 'display:none;'}">
+          <div class="toggle-row" id="row-image-space">
             <label for="tog-image-space">${t.ed.keep_image_space}</label>
             <label class="toggle">
-              <input type="checkbox" id="tog-image-space" ${c.keep_image_space === true ? 'checked' : ''}/>
+              <input type="checkbox" id="tog-image-space"/>
               <span class="slider"></span>
             </label>
           </div>
         </div>
       </div>`;
 
+    this._syncFields();
     this._renderSources();
     this._attachListeners();
     requestAnimationFrame(() => this._syncColorPreviews());
   }
 
   _syncColorPreviews() {
-    const card = this.closest('ha-card') || document.querySelector('feedparser-rss-news-card');
     const syncPreview = (previewId, configVal, cssVar) => {
       const preview = this.shadowRoot.querySelector(previewId);
       if (!preview) return;
-      if (configVal) {
+      const color = configVal || (this.isConnected ? getComputedStyle(this).getPropertyValue(cssVar).trim() : '');
+      if (color) {
         preview.style.backgroundImage = 'none';
-        preview.style.background = configVal;
+        preview.style.background = color;
       } else {
-        if (card) {
-          const computed = getComputedStyle(card).getPropertyValue(cssVar).trim();
-          if (computed) {
-            preview.style.backgroundImage = 'none';
-            preview.style.background = computed;
-            return;
-          }
-        }
         preview.style.background = 'transparent';
         preview.style.backgroundImage = 'repeating-linear-gradient(45deg,#ccc 0,#ccc 2px,transparent 0,transparent 50%)';
         preview.style.backgroundSize = '6px 6px';
@@ -774,40 +767,44 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     const container = this.shadowRoot.querySelector('#ed-sources');
     if (!container) return;
     const sources = this._config.sources || [];
-    container.innerHTML = sources.map((s, i) => `
-      <div class="source-row" data-idx="${i}">
-        <input type="text" class="source-entity-input" placeholder="sensor.feedparser_news" data-field="entity" value="${s.entity || ''}"/>
-        <input type="text" class="source-name-input" placeholder="Name" data-field="name" value="${s.name || ''}"/>
-        <label class="color-swatch-label">
-          <div class="color-swatch color-preview-${i}" style="background:${s.color || '#0077cc'};"></div>
-          <input type="color" class="color-picker-input" data-field="color" value="${s.color || '#0077cc'}"/>
-        </label>
-        <button class="btn-delete" data-idx="${i}">✕</button>
-      </div>`).join('');
+    const rows = sources.map((s, idx) => {
+      const row = el('div', 'source-row');
 
-    container.querySelectorAll('input').forEach(input => {
-      input.addEventListener('input', () => {
-        const row = input.closest('.source-row');
-        const idx = parseInt(row.dataset.idx);
-        const field = input.dataset.field;
-        const sources = [...(this._config.sources || [])];
-        sources[idx] = { ...sources[idx], [field]: input.value };
-        this._upd('sources', sources);
-        if (field === 'color') {
-          const preview = row.querySelector('.color-preview-' + idx);
-          if (preview) preview.style.background = input.value;
-        }
-      });
-    });
+      const input = (type, className, field, value) => {
+        const node = el('input', className);
+        node.type = type;
+        node.value = value;
+        node.addEventListener('input', () => {
+          const updated = [...(this._config.sources || [])];
+          updated[idx] = { ...updated[idx], [field]: node.value };
+          this._upd('sources', updated);
+          if (field === 'color') preview.style.background = node.value;
+        });
+        return node;
+      };
 
-    container.querySelectorAll('.btn-delete').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const idx = parseInt(btn.dataset.idx);
-        const sources = (this._config.sources || []).filter((_, i) => i !== idx);
-        this._upd('sources', sources);
+      const entityInput = input('text', 'source-entity-input', 'entity', s.entity || '');
+      entityInput.placeholder = 'sensor.feedparser_news';
+      const nameInput = input('text', 'source-name-input', 'name', s.name || '');
+      nameInput.placeholder = 'Name';
+
+      const swatch = el('label', 'color-swatch-label');
+      const preview = el('div', 'color-swatch');
+      preview.style.background = s.color || '#0077cc';
+      swatch.append(preview, input('color', 'color-picker-input', 'color', s.color || '#0077cc'));
+
+      // The card requires at least one source, so the last one cannot be removed.
+      const deleteBtn = el('button', 'btn-delete', '✕');
+      deleteBtn.disabled = sources.length <= 1;
+      deleteBtn.addEventListener('click', () => {
+        this._upd('sources', (this._config.sources || []).filter((_, i) => i !== idx));
         this._renderSources();
       });
+
+      row.append(entityInput, nameInput, swatch, deleteBtn);
+      return row;
     });
+    container.replaceChildren(...rows);
   }
 
   _attachListeners() {
@@ -848,10 +845,8 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
       if (text) {
         text.addEventListener('input', e => {
           const val = e.target.value;
-          if (preview && (val === '' || /^#[0-9a-fA-F]{3,6}$/.test(val))) {
-            preview.style.background = val || '#ffffff';
-            if (picker) picker.value = val || '#ffffff';
-          }
+          if (val === '' || /^#[0-9a-fA-F]{6}$/.test(val)) picker.value = val || '#ffffff';
+          this._syncColorPreviews();
         });
       }
     };
@@ -899,6 +894,9 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
     set('#ed-card-title-color-text',    c.card_title_color);
     set('#ed-article-title-color-text', c.article_title_color);
     set('#ed-desc-color-text',          c.desc_color);
+    set('#ed-card-title-color',    c.card_title_color || '#ffffff');
+    set('#ed-article-title-color', c.article_title_color || '#ffffff');
+    set('#ed-desc-color',          c.desc_color || '#ffffff');
     setChk('#tog-source', c.show_source !== false);
     setChk('#tog-date',   c.show_date !== false);
     setChk('#tog-desc',   c.show_description !== false);

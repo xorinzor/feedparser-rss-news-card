@@ -77,7 +77,7 @@ sensor:
 | `title` | string | `''` | Card title. Hidden when empty. |
 | `max_articles` | number | `10` | Maximum number of articles across all sources. |
 | `card_height` | number | `400` | Height of the scrollable article list in px. |
-| `exclude_categories` | string | `''` | Comma-separated tags to hide. Matching ignores case. |
+| `exclude_categories` | string or list | `''` | Tags to hide, as a comma-separated string or a YAML list. Matching ignores case. |
 | `show_source` | boolean | `true` | Show the source name. |
 | `show_date` | boolean | `true` | Show the publish date. |
 | `show_description` | boolean | `true` | Show the article summary. |
