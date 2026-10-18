@@ -9,6 +9,7 @@ const RSS_LOCALES = {
       unavailable:           { icon: '🔌', text: 'Entity is unavailable or in unknown state.' },
       no_entries_attribute:  { icon: '🗂️', text: 'Entity has no "entries" attribute (check feedparser configuration).' },
       empty:                 { icon: '📭', text: 'Entity is reachable but contains no articles yet.' },
+      integration_missing:   { icon: '🧩', text: 'The feedparser integration is not installed or not loaded. Install it via HACS and restart Home Assistant.' },
     },
     cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -18,6 +19,8 @@ const RSS_LOCALES = {
       desc_color:        'Description color',
       sources:           'Sources (entity · name · color)',
       add_source:        '+ Add source',
+      select_feed:       'Select a feed…',
+      feed_not_found:    'not found',
       exclude_categories: 'Exclude categories',
       exclude_placeholder: 'Add category, press Enter',
       max_articles:      'Max articles',
@@ -44,6 +47,7 @@ const RSS_LOCALES = {
       unavailable:           { icon: '🔌', text: 'Az entitás elérhetetlen vagy ismeretlen állapotban van.' },
       no_entries_attribute:  { icon: '🗂️', text: 'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).' },
       empty:                 { icon: '📭', text: 'Az entitás elérhető, de még nincs benne cikk.' },
+      integration_missing:   { icon: '🧩', text: 'A feedparser integráció nincs telepítve vagy nincs betöltve. Telepítsd a HACS-ból, majd indítsd újra a Home Assistantot.' },
     },
     cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -53,6 +57,8 @@ const RSS_LOCALES = {
       desc_color:          'Leírás színe',
       sources:             'Források (entitás · név · szín)',
       add_source:          '+ Forrás hozzáadása',
+      select_feed:         'Válassz hírforrást…',
+      feed_not_found:      'nem található',
       exclude_categories:  'Kizárt kategóriák',
       exclude_placeholder: 'Kategória hozzáadása, majd Enter',
       max_articles:        'Max cikkek száma',
@@ -79,6 +85,7 @@ const RSS_LOCALES = {
       unavailable:           { icon: '🔌', text: 'Entität ist nicht verfügbar oder in unbekanntem Zustand.' },
       no_entries_attribute:  { icon: '🗂️', text: 'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).' },
       empty:                 { icon: '📭', text: 'Entität ist erreichbar, enthält aber noch keine Artikel.' },
+      integration_missing:   { icon: '🧩', text: 'Die feedparser-Integration ist nicht installiert oder nicht geladen. Installiere sie über HACS und starte Home Assistant neu.' },
     },
     cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -88,6 +95,8 @@ const RSS_LOCALES = {
       desc_color:          'Farbe Beschreibung',
       sources:             'Quellen (Entität · Name · Farbe)',
       add_source:          '+ Quelle hinzufügen',
+      select_feed:         'Feed auswählen…',
+      feed_not_found:      'nicht gefunden',
       exclude_categories:  'Kategorien ausschließen',
       exclude_placeholder: 'Kategorie hinzufügen, Enter drücken',
       max_articles:        'Max. Artikel',
@@ -123,6 +132,31 @@ function detectHaLanguage(hass) {
   try {
     return hass?.locale?.language || hass?.language || 'en';
   } catch { return 'en'; }
+}
+
+const FEEDPARSER_URL = 'https://github.com/custom-components/feedparser';
+
+/**
+ * Checks hass.config.components for the feedparser integration.
+ * YAML platforms appear as "feedparser.sensor" (or "sensor.feedparser" before HA 2024.3).
+ * Returns true when the component list is unavailable, so the card never warns without evidence.
+ */
+function isFeedparserLoaded(hass) {
+  const components = hass?.config?.components;
+  if (!Array.isArray(components)) return true;
+  return components.some(c => c === 'feedparser' || c.startsWith('feedparser.') || c.endsWith('.feedparser'));
+}
+
+/** Builds the "feedparser is missing" message with a link to the integration. */
+function integrationWarning(t, className) {
+  const problem = t.problems.integration_missing;
+  const warning = el('div', className, `${problem.icon} ${problem.text} `);
+  const link = el('a', '', 'custom-components/feedparser');
+  link.href = FEEDPARSER_URL;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  warning.appendChild(link);
+  return warning;
 }
 
 // ─── Date parsing ─────────────────────────────────────────────────────────────
@@ -325,6 +359,7 @@ class FeedparserRssNewsCard extends HTMLElement {
   _validateSources() {
     if (!this._hass) return [];
     const issues = [];
+    if (!isFeedparserLoaded(this._hass)) issues.push({ problem: 'integration_missing' });
     for (const source of this._config.sources) {
       if (!source.entity) { issues.push({ entity: '(empty)', name: source.name || '?', problem: 'missing_entity' }); continue; }
       const state = this._hass.states[source.entity];
@@ -343,6 +378,12 @@ class FeedparserRssNewsCard extends HTMLElement {
     panel.appendChild(el('strong', '', t.diag_title));
     const ul = document.createElement('ul');
     issues.forEach(issue => {
+      if (issue.problem === 'integration_missing') {
+        const li = el('li');
+        li.appendChild(integrationWarning(t));
+        ul.appendChild(li);
+        return;
+      }
       const problem = t.problems[issue.problem];
       const label = issue.name === issue.entity ? issue.entity : `${issue.name} (${issue.entity})`;
       ul.appendChild(el('li', '', `${problem.icon} ${label}: ${problem.text}`));
@@ -539,6 +580,7 @@ class FeedparserRssNewsCard extends HTMLElement {
         .diagnostics-panel { background: var(--error-color, #ffcccc); padding: 12px; margin-bottom: 8px; border-radius: 4px; }
         .diagnostics-panel ul { margin: 8px 0; padding-left: 20px; }
         .diagnostics-footer { font-size: 12px; margin-top: 6px; }
+        .diagnostics-panel a { color: inherit; font-weight: 600; }
       </style>
       <ha-card>
         <div class="card-body">
@@ -614,7 +656,20 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._rendered) this._renderShell();
-    else this._renderCategorySuggestions();
+    else {
+      this._renderCategorySuggestions();
+      this._renderSourceOptions();
+      this._renderIntegrationWarning();
+    }
+  }
+
+  _renderIntegrationWarning() {
+    const container = this.shadowRoot.querySelector('#ed-integration-warning');
+    if (!container) return;
+    const missing = this._hass && !isFeedparserLoaded(this._hass);
+    if (missing === this._integrationMissing) return;
+    this._integrationMissing = missing;
+    container.replaceChildren(...(missing ? [integrationWarning(this._t(), 'integration-warning')] : []));
   }
 
   _getLang() {
@@ -637,7 +692,7 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         .editor input[type=text], .editor input[type=number] { width: 100%; padding: 4px 8px; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--card-background-color); color: var(--primary-text-color); }
         .source-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
         .source-row input { width: auto !important; }
-        .source-entity-input { flex: 1; min-width: 0; }
+        .source-entity-select { flex: 1; min-width: 0; padding: 4px 8px; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--card-background-color); color: var(--primary-text-color); }
         .source-name-input { width: 80px; flex-shrink: 0; }
         .btn-add { margin-top: 6px; padding: 4px 12px; cursor: pointer; background: var(--primary-color); color: white; border: none; border-radius: 4px; }
         .btn-delete { padding: 2px 8px; cursor: pointer; border: 1px solid var(--divider-color); border-radius: 4px; background: transparent; color: var(--primary-text-color); }
@@ -661,8 +716,11 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         .color-picker-input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
         .toggle-section { margin-top: 12px; }
         .color-hint { opacity: 0.6; }
+        .integration-warning { padding: 10px 12px; margin-bottom: 8px; border-radius: 4px; border-left: 4px solid var(--warning-color, #ffa600); background: var(--secondary-background-color); color: var(--primary-text-color); font-size: 13px; line-height: 1.4; }
+        .integration-warning a { color: var(--primary-color); font-weight: 600; }
       </style>
       <div class="editor">
+        <div id="ed-integration-warning"></div>
         <label>${t.ed.card_title}</label>
         <input type="text" id="ed-title"/>
 
@@ -761,6 +819,7 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
 
     this._syncFields();
     this._renderSources();
+    this._renderIntegrationWarning();
     this._attachListeners();
     requestAnimationFrame(() => this._syncColorPreviews());
   }
@@ -805,10 +864,23 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         return node;
       };
 
-      const entityInput = input('text', 'source-entity-input', 'entity', s.entity || '');
-      entityInput.placeholder = 'sensor.feedparser_news';
       const nameInput = input('text', 'source-name-input', 'name', s.name || '');
       nameInput.placeholder = 'Name';
+
+      const entitySelect = el('select', 'source-entity-select');
+      entitySelect.dataset.idx = idx;
+      entitySelect.addEventListener('change', () => {
+        const updated = [...(this._config.sources || [])];
+        const source = { ...updated[idx], entity: entitySelect.value };
+        if (!source.name) {
+          source.name = this._feedName(entitySelect.value);
+          nameInput.value = source.name;
+        }
+        updated[idx] = source;
+        this._upd('sources', updated);
+        this._feedKey = null;
+        this._renderSourceOptions();
+      });
 
       const swatch = el('label', 'color-swatch-label');
       const preview = el('div', 'color-swatch');
@@ -823,10 +895,57 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
         this._renderSources();
       });
 
-      row.append(entityInput, nameInput, swatch, deleteBtn);
+      row.append(entitySelect, nameInput, swatch, deleteBtn);
       return row;
     });
     container.replaceChildren(...rows);
+    this._feedKey = null;
+    this._renderSourceOptions();
+  }
+
+  _feedName(entityId) {
+    return this._hass?.states[entityId]?.attributes?.friendly_name || entityId;
+  }
+
+  /** Sensors created by the feedparser integration, or any sensor exposing an "entries" list. */
+  _feedEntities() {
+    const states = this._hass?.states || {};
+    return Object.keys(states)
+      .filter(id => id.startsWith('sensor.') && (
+        this._hass.entities?.[id]?.platform === 'feedparser' ||
+        Array.isArray(states[id].attributes?.entries)
+      ))
+      .sort((a, b) => this._feedName(a).localeCompare(this._feedName(b)));
+  }
+
+  _renderSourceOptions() {
+    const selects = this.shadowRoot.querySelectorAll('.source-entity-select');
+    if (selects.length === 0) return;
+    const feeds = this._feedEntities();
+    const key = feeds.map(id => `${id}=${this._feedName(id)}`).join('\n');
+    if (key === this._feedKey) return;
+    this._feedKey = key;
+
+    const t = this._t();
+    const option = (value, label) => {
+      const node = el('option', '', label);
+      node.value = value;
+      return node;
+    };
+    selects.forEach(select => {
+      const current = this._config.sources?.[select.dataset.idx]?.entity || '';
+      const options = feeds.map(id => option(id, `${this._feedName(id)} (${id})`));
+      if (current && !feeds.includes(current)) {
+        options.unshift(option(current, `${current} (${t.ed.feed_not_found})`));
+      }
+      if (!current) {
+        const placeholder = option('', t.ed.select_feed);
+        placeholder.disabled = true;
+        options.unshift(placeholder);
+      }
+      select.replaceChildren(...options);
+      select.value = current;
+    });
   }
 
   _attachListeners() {
@@ -987,7 +1106,8 @@ class FeedparserRssNewsCardEditor extends HTMLElement {
       if (!Array.isArray(entries)) continue;
       entries.forEach(a => (Array.isArray(a.tags) ? a.tags : []).forEach(tag => {
         const term = typeof tag?.term === 'string' ? tag.term.trim() : '';
-        if (term && !excluded.has(term.toLowerCase())) terms.set(term.toLowerCase(), term);
+        const key = term.toLowerCase();
+        if (term && !excluded.has(key) && !terms.has(key)) terms.set(key, term);
       }));
     }
     const suggestions = [...terms.values()].sort((a, b) => a.localeCompare(b));

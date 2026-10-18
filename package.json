@@ -1,0 +1,12 @@
+{
+  "name": "feedparser-rss-news-card",
+  "private": true,
+  "description": "Home Assistant card for feedparser RSS sensors",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
+  }
+}

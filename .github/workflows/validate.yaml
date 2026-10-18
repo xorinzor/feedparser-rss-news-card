@@ -17,3 +17,16 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "plugin"
+
+  test:
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test

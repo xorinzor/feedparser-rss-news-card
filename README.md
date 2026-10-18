@@ -15,11 +15,11 @@ A RSS newsfeed reader card specifically for use with FeedParser sensors. Works w
 - Multiple RSS sources using FeedParser sensors in a single card, sorted by datetime
 - Filter out unwanted news items by tags directly from the UI
 - Automatic language & date format detection from Home Assistant settings, including 12/24-hour time format
-- Visual editor with color picker, toggle switches, and font size controls
+- Visual editor with a feed picker, color picker, toggle switches and font size controls
 - Community localization support (English, Hungarian, German included)
 - Flexible layout: toggle images, descriptions, source names and dates; set sizes and colors
 - Clicking an article opens it in a popup window, or in the external browser when using the Companion app. Opened articles are greyed out until the page reloads.
-- Diagnostics panel when a configured sensor does not exist
+- Diagnostics panel when the feedparser integration is missing or a sensor is missing, unavailable or empty
 - Feed content renders as plain text, and only `http(s)` links and images load, so a malicious feed cannot inject scripts
 
 ## Requirements
@@ -129,3 +129,14 @@ To test changes locally, you can use the [File Editor](https://github.com/home-a
 2. Remove the `feedparser-rss-news-card.js.gz` file, if you don't do this, changes you'll be making will not become visible.
 3. Edit the `feedparser-rss-news-card.js` file, apply your changes here.
 4. Save the changes and reload your browser, make sure to empty the cache.
+
+### Running tests
+
+The tests load the card into [jsdom](https://github.com/jsdom/jsdom) and need Node.js 22 or newer.
+
+```bash
+npm install
+npm test
+```
+
+GitHub Actions runs the same tests on every push and pull request.
