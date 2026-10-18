@@ -243,19 +243,35 @@ describe('diagnostics', () => {
       'sensor.empty': feedState([]),
     } }));
     assert.deepEqual(diagnostics(card), [
-      '⚠️ Blank ((empty)): Missing entity ID in configuration.',
-      '❌ sensor.missing: Entity does not exist in Home Assistant.',
-      '🔌 Down (sensor.down): Entity is unavailable or in unknown state.',
-      '🗂️ sensor.plain: Entity has no "entries" attribute (check feedparser configuration).',
-      '📭 sensor.empty: Entity is reachable but contains no articles yet.',
+      'Blank: No feed selected. Pick one in the card editor.',
+      'sensor.missing: Entity does not exist in Home Assistant.',
+      'Down (sensor.down): Entity is unavailable or in unknown state.',
+      'sensor.plain: Entity has no "entries" attribute (check feedparser configuration).',
+      'sensor.empty: Entity is reachable but contains no articles yet.',
     ]);
     assert.match(card.shadowRoot.querySelector('.diagnostics-panel').textContent, /inclusions:.*tags/);
+  });
+
+  it('names an unnamed source without a feed by its position', () => {
+    const card = mountCard(window, { sources: [{ entity: 'sensor.nu' }, { entity: '', name: '' }] }, hassWith());
+    assert.deepEqual(diagnostics(card), ['Source 2: No feed selected. Pick one in the card editor.']);
+  });
+
+  it('renders when the only source has no feed yet', () => {
+    const card = mountCard(window, { sources: [{ entity: '' }] }, makeHass());
+    assert.equal(diagnostics(card).length, 1);
+    assert.ok(card.shadowRoot.querySelector('.no-articles'));
+  });
+
+  it('translates the label of a source without a feed', () => {
+    const card = mountCard(window, { sources: [{ entity: '' }] }, makeHass({ language: 'de' }));
+    assert.deepEqual(diagnostics(card), ['Quelle 1: Kein Feed ausgewählt. Wähle einen im Karteneditor aus.']);
   });
 
   it('uses the Home Assistant language', () => {
     const card = mountCard(window, { sources: [{ entity: 'sensor.missing' }] }, makeHass({ language: 'de' }));
     assert.match(card.shadowRoot.querySelector('.diagnostics-panel strong').textContent, /Sensor/);
-    assert.deepEqual(diagnostics(card), ['❌ sensor.missing: Entität existiert nicht in Home Assistant.']);
+    assert.deepEqual(diagnostics(card), ['sensor.missing: Entität existiert nicht in Home Assistant.']);
   });
 
   it('renders source names as text', () => {
@@ -276,7 +292,7 @@ describe('diagnostics', () => {
 
     it('warns when feedparser is not loaded, with a link to the integration', () => {
       const card = mountCard(window, { sources: [{ entity: 'sensor.nu' }] }, missing);
-      assert.match(diagnostics(card)[0], /^🧩 The feedparser integration is not installed/);
+      assert.match(diagnostics(card)[0], /^The feedparser integration is not installed/);
       const link = card.shadowRoot.querySelector('.diagnostics li a');
       assert.equal(link.href, 'https://github.com/custom-components/feedparser');
       assert.equal(link.target, '_blank');
@@ -286,8 +302,8 @@ describe('diagnostics', () => {
     it('lists the integration warning before source problems', () => {
       const card = mountCard(window, { sources: [{ entity: 'sensor.missing' }] }, makeHass({ components: [] }));
       assert.equal(diagnostics(card).length, 2);
-      assert.match(diagnostics(card)[0], /^🧩/);
-      assert.match(diagnostics(card)[1], /^❌ sensor.missing/);
+      assert.match(diagnostics(card)[0], /^The feedparser integration/);
+      assert.match(diagnostics(card)[1], /^sensor.missing/);
     });
 
     for (const components of [['feedparser'], ['feedparser.sensor'], ['sensor.feedparser']]) {
@@ -301,7 +317,7 @@ describe('diagnostics', () => {
     it('does not match other integrations with a similar name', () => {
       const card = mountCard(window, { sources: [{ entity: 'sensor.nu' }] },
         makeHass({ states: { 'sensor.nu': feedState(nuEntries) }, components: ['feedparser_extra', 'myfeedparser.sensor'] }));
-      assert.match(diagnostics(card)[0], /^🧩/);
+      assert.match(diagnostics(card)[0], /^The feedparser integration/);
     });
 
     it('does not warn when Home Assistant does not expose its components', () => {

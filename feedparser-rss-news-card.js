@@ -2,14 +2,15 @@ const RSS_LOCALES = {
   en: {
     no_articles: 'No articles to display.',
     diag_title: '⚠️ Sensor diagnostics',
+    source_label: 'Source',
     diag_footer: 'Missing sensors must be created using the <b>feedparser</b> custom component.',
     problems: {
-      missing_entity:        { icon: '⚠️', text: 'Missing entity ID in configuration.' },
-      not_found:             { icon: '❌', text: 'Entity does not exist in Home Assistant.' },
-      unavailable:           { icon: '🔌', text: 'Entity is unavailable or in unknown state.' },
-      no_entries_attribute:  { icon: '🗂️', text: 'Entity has no "entries" attribute (check feedparser configuration).' },
-      empty:                 { icon: '📭', text: 'Entity is reachable but contains no articles yet.' },
-      integration_missing:   { icon: '🧩', text: 'The feedparser integration is not installed or not loaded. Install it via HACS and restart Home Assistant.' },
+      missing_entity:        'No feed selected. Pick one in the card editor.',
+      not_found:             'Entity does not exist in Home Assistant.',
+      unavailable:           'Entity is unavailable or in unknown state.',
+      no_entries_attribute:  'Entity has no "entries" attribute (check feedparser configuration).',
+      empty:                 'Entity is reachable but contains no articles yet.',
+      integration_missing:   'The feedparser integration is not installed or not loaded. Install it via HACS and restart Home Assistant.',
     },
     cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -40,14 +41,15 @@ const RSS_LOCALES = {
   hu: {
     no_articles: 'Nincs megjeleníthető cikk.',
     diag_title: '⚠️ Szenzor diagnosztika',
+    source_label: 'Forrás',
     diag_footer: 'A hiányzó szenzorokat a <b>feedparser</b> integrációval kell létrehozni.',
     problems: {
-      missing_entity:        { icon: '⚠️', text: 'Hiányzó entitás azonosító a konfigurációban.' },
-      not_found:             { icon: '❌', text: 'Az entitás nem létezik a Home Assistantban.' },
-      unavailable:           { icon: '🔌', text: 'Az entitás elérhetetlen vagy ismeretlen állapotban van.' },
-      no_entries_attribute:  { icon: '🗂️', text: 'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).' },
-      empty:                 { icon: '📭', text: 'Az entitás elérhető, de még nincs benne cikk.' },
-      integration_missing:   { icon: '🧩', text: 'A feedparser integráció nincs telepítve vagy nincs betöltve. Telepítsd a HACS-ból, majd indítsd újra a Home Assistantot.' },
+      missing_entity:        'Nincs hírforrás kiválasztva. Válassz egyet a kártyaszerkesztőben.',
+      not_found:             'Az entitás nem létezik a Home Assistantban.',
+      unavailable:           'Az entitás elérhetetlen vagy ismeretlen állapotban van.',
+      no_entries_attribute:  'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).',
+      empty:                 'Az entitás elérhető, de még nincs benne cikk.',
+      integration_missing:   'A feedparser integráció nincs telepítve vagy nincs betöltve. Telepítsd a HACS-ból, majd indítsd újra a Home Assistantot.',
     },
     cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -78,14 +80,15 @@ const RSS_LOCALES = {
   de: {
     no_articles: 'Keine Artikel zum Anzeigen.',
     diag_title: '⚠️ Sensor-Diagnose',
+    source_label: 'Quelle',
     diag_footer: 'Fehlende Sensoren müssen mit der <b>feedparser</b>-Integration erstellt werden.',
     problems: {
-      missing_entity:        { icon: '⚠️', text: 'Fehlende Entitäts-ID in der Konfiguration.' },
-      not_found:             { icon: '❌', text: 'Entität existiert nicht in Home Assistant.' },
-      unavailable:           { icon: '🔌', text: 'Entität ist nicht verfügbar oder in unbekanntem Zustand.' },
-      no_entries_attribute:  { icon: '🗂️', text: 'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).' },
-      empty:                 { icon: '📭', text: 'Entität ist erreichbar, enthält aber noch keine Artikel.' },
-      integration_missing:   { icon: '🧩', text: 'Die feedparser-Integration ist nicht installiert oder nicht geladen. Installiere sie über HACS und starte Home Assistant neu.' },
+      missing_entity:        'Kein Feed ausgewählt. Wähle einen im Karteneditor aus.',
+      not_found:             'Entität existiert nicht in Home Assistant.',
+      unavailable:           'Entität ist nicht verfügbar oder in unbekanntem Zustand.',
+      no_entries_attribute:  'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).',
+      empty:                 'Entität ist erreichbar, enthält aber noch keine Artikel.',
+      integration_missing:   'Die feedparser-Integration ist nicht installiert oder nicht geladen. Installiere sie über HACS und starte Home Assistant neu.',
     },
     cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
     ed: {
@@ -149,8 +152,7 @@ function isFeedparserLoaded(hass) {
 
 /** Builds the "feedparser is missing" message with a link to the integration. */
 function integrationWarning(t, className) {
-  const problem = t.problems.integration_missing;
-  const warning = el('div', className, `${problem.icon} ${problem.text} `);
+  const warning = el('div', className, `${t.problems.integration_missing} `);
   const link = el('a', '', 'custom-components/feedparser');
   link.href = FEEDPARSER_URL;
   link.target = '_blank';
@@ -273,7 +275,7 @@ class FeedparserRssNewsCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
-    this._lastStateKey = '';
+    this._lastStateKey = null;
     this._initialized = false;
   }
 
@@ -327,7 +329,7 @@ class FeedparserRssNewsCard extends HTMLElement {
       desc_color:       config.desc_color || '',
     };
     this._initialized = false;
-    this._lastStateKey = '';
+    this._lastStateKey = null;
     this._render();
     if (this._hass) this.hass = this._hass;
   }
@@ -360,8 +362,8 @@ class FeedparserRssNewsCard extends HTMLElement {
     if (!this._hass) return [];
     const issues = [];
     if (!isFeedparserLoaded(this._hass)) issues.push({ problem: 'integration_missing' });
-    for (const source of this._config.sources) {
-      if (!source.entity) { issues.push({ entity: '(empty)', name: source.name || '?', problem: 'missing_entity' }); continue; }
+    for (const [index, source] of this._config.sources.entries()) {
+      if (!source.entity) { issues.push({ name: source.name, position: index + 1, problem: 'missing_entity' }); continue; }
       const state = this._hass.states[source.entity];
       if (!state) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'not_found' }); continue; }
       if (state.state === 'unavailable' || state.state === 'unknown') { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'unavailable' }); continue; }
@@ -384,9 +386,10 @@ class FeedparserRssNewsCard extends HTMLElement {
         ul.appendChild(li);
         return;
       }
-      const problem = t.problems[issue.problem];
-      const label = issue.name === issue.entity ? issue.entity : `${issue.name} (${issue.entity})`;
-      ul.appendChild(el('li', '', `${problem.icon} ${label}: ${problem.text}`));
+      let label;
+      if (!issue.entity) label = issue.name || `${t.source_label} ${issue.position}`;
+      else label = issue.name === issue.entity ? issue.entity : `${issue.name} (${issue.entity})`;
+      ul.appendChild(el('li', '', `${label}: ${t.problems[issue.problem]}`));
     });
     panel.appendChild(ul);
     // Locale strings are trusted constants with inline markup; entity names above stay textContent.
