@@ -23,10 +23,23 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-/** Pass components: null to simulate a frontend that does not expose the loaded components. */
-function makeHass({ states = {}, entities, language = 'en', timeFormat, components = ['feedparser', 'feedparser.sensor'] } = {}) {
+const DEFAULT_SERVICES = { homeassistant: { update_entity: {} } };
+
+/**
+ * Pass components: null to simulate a frontend that does not expose the loaded components.
+ * callService records each call in hass.serviceCalls; pass callServiceResult to control what it returns.
+ */
+function makeHass({
+  states = {}, entities, language = 'en', timeFormat, components = ['feedparser', 'feedparser.sensor'],
+  services = DEFAULT_SERVICES, callServiceResult,
+} = {}) {
   const config = components ? { components } : undefined;
-  return { language, locale: { language, time_format: timeFormat }, states, entities, config };
+  const serviceCalls = [];
+  const callService = (domain, service, data) => {
+    serviceCalls.push({ domain, service, data });
+    return callServiceResult ?? Promise.resolve();
+  };
+  return { language, locale: { language, time_format: timeFormat }, states, entities, config, services, callService, serviceCalls };
 }
 
 function feedState(entries, { friendlyName, state = 'ok', lastUpdated = '1' } = {}) {

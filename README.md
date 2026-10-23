@@ -19,7 +19,8 @@ A RSS newsfeed reader card specifically for use with FeedParser sensors. Works w
 - Community localization support (English, Hungarian, German included)
 - Flexible layout: toggle images, descriptions, source names and dates; set sizes and colors
 - Clicking an article opens it in a popup window, or in the external browser when using the Companion app. Opened articles are greyed out until the page reloads.
-- Diagnostics panel when the feedparser integration is missing or a sensor is missing, unavailable or empty
+- Diagnostics panel when the feedparser integration is missing or a sensor is missing or unavailable
+- Feeds without items show a "Feeds contain no items yet" notice with a refresh button that polls the sensors again
 - Feed content renders as plain text, and only `http(s)` links and images load, so a malicious feed cannot inject scripts
 
 ## Requirements

@@ -1,6 +1,8 @@
 const RSS_LOCALES = {
   en: {
     no_articles: 'No articles to display.',
+    feeds_empty: 'Feeds contain no items yet',
+    refresh: 'Refresh',
     diag_title: '⚠️ Sensor diagnostics',
     source_label: 'Source',
     diag_footer: 'Missing sensors must be created using the <b>feedparser</b> custom component.',
@@ -9,7 +11,6 @@ const RSS_LOCALES = {
       not_found:             'Entity does not exist in Home Assistant.',
       unavailable:           'Entity is unavailable or in unknown state.',
       no_entries_attribute:  'Entity has no "entries" attribute (check feedparser configuration).',
-      empty:                 'Entity is reachable but contains no articles yet.',
       integration_missing:   'The feedparser integration is not installed or not loaded. Install it via HACS and restart Home Assistant.',
     },
     cmd_hint: 'Ensure feedparser is configured correctly:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
@@ -40,6 +41,8 @@ const RSS_LOCALES = {
   },
   hu: {
     no_articles: 'Nincs megjeleníthető cikk.',
+    feeds_empty: 'A hírforrásokban még nincs cikk',
+    refresh: 'Frissítés',
     diag_title: '⚠️ Szenzor diagnosztika',
     source_label: 'Forrás',
     diag_footer: 'A hiányzó szenzorokat a <b>feedparser</b> integrációval kell létrehozni.',
@@ -48,7 +51,6 @@ const RSS_LOCALES = {
       not_found:             'Az entitás nem létezik a Home Assistantban.',
       unavailable:           'Az entitás elérhetetlen vagy ismeretlen állapotban van.',
       no_entries_attribute:  'Az entitásnak nincs "entries" attribútuma (ellenőrizd a feedparser beállítást).',
-      empty:                 'Az entitás elérhető, de még nincs benne cikk.',
       integration_missing:   'A feedparser integráció nincs telepítve vagy nincs betöltve. Telepítsd a HACS-ból, majd indítsd újra a Home Assistantot.',
     },
     cmd_hint: 'Feedparser beállítás szükséges:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
@@ -79,6 +81,8 @@ const RSS_LOCALES = {
   },
   de: {
     no_articles: 'Keine Artikel zum Anzeigen.',
+    feeds_empty: 'Die Feeds enthalten noch keine Einträge',
+    refresh: 'Aktualisieren',
     diag_title: '⚠️ Sensor-Diagnose',
     source_label: 'Quelle',
     diag_footer: 'Fehlende Sensoren müssen mit der <b>feedparser</b>-Integration erstellt werden.',
@@ -87,7 +91,6 @@ const RSS_LOCALES = {
       not_found:             'Entität existiert nicht in Home Assistant.',
       unavailable:           'Entität ist nicht verfügbar oder in unbekanntem Zustand.',
       no_entries_attribute:  'Entität hat kein "entries"-Attribut (feedparser Konfiguration prüfen).',
-      empty:                 'Entität ist erreichbar, enthält aber noch keine Artikel.',
       integration_missing:   'Die feedparser-Integration ist nicht installiert oder nicht geladen. Installiere sie über HACS und starte Home Assistant neu.',
     },
     cmd_hint: 'feedparser Konfiguration erforderlich:<br><b>platform:</b> feedparser<br><b>inclusions:</b> title, link, summary, image, published, tags',
@@ -366,10 +369,10 @@ class FeedparserRssNewsCard extends HTMLElement {
       if (!source.entity) { issues.push({ name: source.name, position: index + 1, problem: 'missing_entity' }); continue; }
       const state = this._hass.states[source.entity];
       if (!state) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'not_found' }); continue; }
-      if (state.state === 'unavailable' || state.state === 'unknown') { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'unavailable' }); continue; }
       const entries = state.attributes.entries;
-      if (!Array.isArray(entries)) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'no_entries_attribute' }); continue; }
-      if (entries.length === 0) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'empty' }); }
+      // feedparser reports a feed without items as "unknown" but keeps the entries attribute.
+      if (state.state === 'unavailable' || (state.state === 'unknown' && !Array.isArray(entries))) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'unavailable' }); continue; }
+      if (!Array.isArray(entries)) { issues.push({ entity: source.entity, name: source.name || source.entity, problem: 'no_entries_attribute' }); }
     }
     return issues;
   }
@@ -477,7 +480,13 @@ class FeedparserRssNewsCard extends HTMLElement {
     const t = this._t();
     const frag = document.createDocumentFragment();
     if (articles.length === 0) {
-      frag.appendChild(el('div', 'no-articles', t.no_articles));
+      if (this._hasEntries()) {
+        frag.appendChild(el('div', 'no-articles', t.no_articles));
+        return frag;
+      }
+      frag.appendChild(el('div', 'no-articles', t.feeds_empty));
+      const refreshButton = this._buildRefreshButton();
+      if (refreshButton) frag.appendChild(refreshButton);
       return frag;
     }
 
@@ -549,6 +558,37 @@ class FeedparserRssNewsCard extends HTMLElement {
     return frag;
   }
 
+  /** True when a source holds entries, even if the category filter hides all of them. */
+  _hasEntries() {
+    return this._config.sources.some(source => {
+      const entries = this._hass?.states[source.entity]?.attributes?.entries;
+      return Array.isArray(entries) && entries.length > 0;
+    });
+  }
+
+  /**
+   * feedparser has no refresh service of its own, but homeassistant.update_entity
+   * makes Home Assistant poll the sensors, which downloads the feeds again.
+   * Returns null when Home Assistant does not offer that service.
+   */
+  _buildRefreshButton() {
+    const entityIds = [...new Set(this._config.sources.map(s => s.entity).filter(id => id && this._hass?.states[id]))];
+    if (!this._hass?.services?.homeassistant?.update_entity || entityIds.length === 0) return null;
+    const button = el('button', 'refresh-button', this._t().refresh);
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await this._hass.callService('homeassistant', 'update_entity', { entity_id: entityIds });
+      } catch {
+        // Home Assistant already shows a notification when a service call fails.
+      } finally {
+        button.disabled = false;
+      }
+    });
+    return button;
+  }
+
   _handleLinkClick(url) {
     if (window.externalApp?.openExternalUrl) {
       window.externalApp.openExternalUrl(url);
@@ -571,7 +611,9 @@ class FeedparserRssNewsCard extends HTMLElement {
         .card-body { padding: 12px 16px; }
         .card-title { font-size: 24px; font-weight: 400; margin-bottom: 8px; }
         .scroll-container { overflow-y: scroll; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: thin; scrollbar-color: var(--divider-color) transparent; }
-        .no-articles { padding: 20px; color: var(--secondary-text-color); text-align: center; }
+        .no-articles { padding: 20px; color: var(--disabled-text-color); text-align: center; }
+        .refresh-button { display: block; margin: 0 auto; padding: 6px 16px; cursor: pointer; font: inherit; border: 1px solid var(--divider-color); border-radius: 4px; background: transparent; color: var(--primary-color); }
+        .refresh-button:disabled { opacity: 0.4; cursor: default; }
         .article-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--divider-color); cursor: pointer; -webkit-tap-highlight-color: transparent; }
         .article-content { flex: 1; min-width: 0; text-align: left; }
         .article-title { font-weight: 600; line-height: 1.4; white-space: normal; word-break: break-word; margin-bottom: 4px; }

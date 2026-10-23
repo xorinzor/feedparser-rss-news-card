@@ -1,6 +1,6 @@
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { loadCard, makeHass, feedState, mountCard, articleTitles, diagnostics } = require('./helpers');
+const { loadCard, plain, makeHass, feedState, mountCard, articleTitles, diagnostics } = require('./helpers');
 
 const nuEntries = [
   { title: 'Older NU', link: 'https://nu.example/1', summary: 'one', published: 'Fri, 17 Oct 2025 08:00:00 +0000', tags: [{ term: 'Voetbal' }] },
@@ -66,9 +66,10 @@ describe('articles', () => {
     assert.deepEqual(articleTitles(card), ['Newest NU', 'Middle Tech']);
   });
 
-  it('shows a message when there are no articles', () => {
-    const card = mountCard(window, { sources: [{ entity: 'sensor.empty' }] }, makeHass({ states: { 'sensor.empty': feedState([]) } }));
+  it('shows a message when the category filter hides every article', () => {
+    const card = mountCard(window, { sources, exclude_categories: ['voetbal', 'politiek', 'sport'] }, hassWith());
     assert.equal(card.shadowRoot.querySelector('.no-articles').textContent, 'No articles to display.');
+    assert.equal(card.shadowRoot.querySelector('.refresh-button'), null);
   });
 
   for (const [label, exclude] of [['comma-separated string', 'voetbal, SPORT'], ['list', ['Voetbal', 'sport']]]) {
@@ -97,6 +98,62 @@ describe('articles', () => {
     const updated = [...techEntries, { title: 'Breaking', published: 'Sun, 19 Oct 2025 07:00:00 +0000' }];
     card.hass = hassWith({ 'sensor.tech': feedState(updated, { lastUpdated: '2' }) });
     assert.equal(articleTitles(card)[0], 'Breaking');
+  });
+});
+
+describe('empty feeds', () => {
+  const emptySources = [{ entity: 'sensor.empty' }, { entity: 'sensor.unknown' }];
+  const emptyStates = { 'sensor.empty': feedState([]), 'sensor.unknown': feedState([], { state: 'unknown' }) };
+  const render = (options = {}, config = { sources: emptySources }) =>
+    mountCard(window, config, makeHass({ states: emptyStates, ...options }));
+  const refreshButton = card => card.shadowRoot.querySelector('.refresh-button');
+
+  it('shows a greyed out notice instead of a diagnostics panel', () => {
+    const card = render();
+    const notice = card.shadowRoot.querySelector('.no-articles');
+    assert.equal(notice.textContent, 'Feeds contain no items yet');
+    assert.match(card.shadowRoot.querySelector('style').textContent, /\.no-articles \{[^}]*var\(--disabled-text-color\)/);
+    assert.equal(card.shadowRoot.querySelector('.diagnostics-panel'), null);
+  });
+
+  it('refreshes every configured feed through homeassistant.update_entity', () => {
+    const hass = makeHass({ states: emptyStates });
+    const card = mountCard(window, { sources: [...emptySources, { entity: 'sensor.empty' }] }, hass);
+    refreshButton(card).click();
+    assert.deepEqual(plain(hass.serviceCalls), [
+      { domain: 'homeassistant', service: 'update_entity', data: { entity_id: ['sensor.empty', 'sensor.unknown'] } },
+    ]);
+  });
+
+  it('disables the refresh button until the refresh finishes', async () => {
+    let finish;
+    const card = render({ callServiceResult: new Promise(resolve => { finish = resolve; }) });
+    refreshButton(card).click();
+    assert.equal(refreshButton(card).disabled, true);
+    finish();
+    await new Promise(resolve => setTimeout(resolve));
+    assert.equal(refreshButton(card).disabled, false);
+  });
+
+  it('enables the refresh button again when the refresh fails', async () => {
+    const card = render({ callServiceResult: Promise.reject(new Error('timeout')) });
+    refreshButton(card).click();
+    await new Promise(resolve => setTimeout(resolve));
+    assert.equal(refreshButton(card).disabled, false);
+  });
+
+  it('hides the refresh button when Home Assistant cannot update entities', () => {
+    assert.equal(refreshButton(render({ services: {} })), null);
+  });
+
+  it('hides the refresh button when no configured feed exists', () => {
+    assert.equal(refreshButton(render({}, { sources: [{ entity: 'sensor.missing' }, { entity: '' }] })), null);
+  });
+
+  it('translates the notice and the refresh button', () => {
+    const card = render({ language: 'de' });
+    assert.equal(card.shadowRoot.querySelector('.no-articles').textContent, 'Die Feeds enthalten noch keine Einträge');
+    assert.equal(refreshButton(card).textContent, 'Aktualisieren');
   });
 });
 
@@ -234,20 +291,20 @@ describe('diagnostics', () => {
         { entity: '', name: 'Blank' },
         { entity: 'sensor.missing' },
         { entity: 'sensor.down', name: 'Down' },
+        { entity: 'sensor.unknown' },
         { entity: 'sensor.plain' },
-        { entity: 'sensor.empty' },
       ],
     }, makeHass({ states: {
       'sensor.down': { state: 'unavailable', attributes: {} },
+      'sensor.unknown': { state: 'unknown', attributes: {} },
       'sensor.plain': { state: '3', attributes: {} },
-      'sensor.empty': feedState([]),
     } }));
     assert.deepEqual(diagnostics(card), [
       'Blank: No feed selected. Pick one in the card editor.',
       'sensor.missing: Entity does not exist in Home Assistant.',
       'Down (sensor.down): Entity is unavailable or in unknown state.',
+      'sensor.unknown: Entity is unavailable or in unknown state.',
       'sensor.plain: Entity has no "entries" attribute (check feedparser configuration).',
-      'sensor.empty: Entity is reachable but contains no articles yet.',
     ]);
     assert.match(card.shadowRoot.querySelector('.diagnostics-panel').textContent, /inclusions:.*tags/);
   });
